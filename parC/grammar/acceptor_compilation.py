@@ -30,6 +30,11 @@ from parC.yaml_utils.cache import (
     save_symbol_table,
     load_symbol_table,
     observed_cache,
+    compute_cache_key,
+    get_cached_symbol_table,
+    save_cached_symbol_table,
+    get_cached_pattern_fsts,
+    save_cached_pattern_fsts,
 )
 from parC.fst_utils import ReservedSymbolMixin as R
 from parC.yaml_utils.models import Feature, Inventory, Pattern, Token
@@ -67,6 +72,11 @@ def build_symbol_table(
     return syms
 
 
+def get_symbol_table_key() -> str:
+    config_dirs = [kind_dir("Inventory"), kind_dir("FeatureDefinitions")]
+    return compute_cache_key("symbol_table", "SymbolTable", config_dirs)
+
+
 @observed_cache(
     [
         kind_dir("Patterns"),
@@ -75,15 +85,12 @@ def build_symbol_table(
     ]
 )
 def get_symbol_table() -> pynini.SymbolTable:
-    if is_syms_cache_valid(
-        kind_dir("Inventory"), kind_dir(
-            "Patterns"), kind_dir("FeatureDefinitions")
-    ):
-        loaded = load_symbol_table()
-        if loaded is not None:
-            return loaded
+    cache_key = get_symbol_table_key()
+    loaded = get_cached_symbol_table(cache_key)
+    if loaded is not None:
+        return loaded
     syms = build_symbol_table(get_inventory_items(), get_feature_array())
-    save_symbol_table(syms)
+    save_cached_symbol_table(cache_key, syms)
     symbol_table = syms
     return symbol_table
 
@@ -557,6 +564,16 @@ def compile_all_patterns(
     return compiled
 
 
+def get_pattern_fsts_key() -> str:
+    config_dirs = [
+        kind_dir("Patterns"),
+        kind_dir("Inventory"),
+        kind_dir("FeatureDefinitions"),
+    ]
+    child_keys = {"symbol_table": get_symbol_table_key()}
+    return compute_cache_key("patterns", "Patterns", config_dirs, child_keys)
+
+
 @observed_cache(
     [
         kind_dir("Patterns"),
@@ -565,7 +582,11 @@ def compile_all_patterns(
     ]
 )
 def get_pattern_fsts() -> dict[str, pynini.Fst]:
-    """Returns compiled_patterns (class FSTs + pattern FSTs). Memory-only cache."""
+    """Returns compiled_patterns (class FSTs + pattern FSTs). Disk-cached via SHA-256."""
+    cache_key = get_pattern_fsts_key()
+    loaded = get_cached_pattern_fsts(cache_key)
+    if loaded is not None:
+        return loaded
     syms = get_symbol_table()
     inventory = get_inventory_items()
     features = get_feature_array()
@@ -583,6 +604,7 @@ def get_pattern_fsts() -> dict[str, pynini.Fst]:
         special_fsas,
         class_fsts,
     )
+    save_cached_pattern_fsts(cache_key, pattern_fsts)
     return pattern_fsts
 
 

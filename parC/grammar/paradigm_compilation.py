@@ -18,7 +18,7 @@ from pynini.lib import pynutil
 from typing import NamedTuple
 from frozendict import frozendict
 
-from parC.yaml_utils.cache import is_fst_cache_valid, save_fst, load_fst, observed_cache
+from parC.yaml_utils.cache import is_fst_cache_valid, save_fst, load_fst, observed_cache, compute_cache_key, get_cached_fst, save_cached_fst
 from parC.fst_utils import ReservedSymbolMixin as R
 from parC.fst_utils import stringify_features
 from parC.constants import get_yaml_dir
@@ -286,30 +286,79 @@ def build_search_lexicon_and_leftfactor(
 _FST_KINDS = ("inflect", "parse", "search_lexicon", "search_left_factor")
 
 
-def _paradigm_cache_valid(name: str) -> bool:
-    return all(
-        is_fst_cache_valid("Paradigm", name, k, get_yaml_dir()) for k in _FST_KINDS
-    )
+def get_paradigm_cache_key(paradigm_name: str) -> str:
+    config_dirs = [
+        kind_dir("Paradigm"),
+        kind_dir("PartOfSpeech"),
+        kind_dir("Wordlists"),
+        kind_dir("FeatureMarkers"),
+        kind_dir("ContingentFeatureMarkers"),
+        kind_dir("Rules"),
+        kind_dir("Patterns"),
+        kind_dir("Inventory"),
+        kind_dir("FeatureDefinitions"),
+    ]
+    child_keys = {}
+    try:
+        from parC.grammar.transducer_compilation import get_marker_fst_key
+        feature_map = get_feature_map()
+        combos, _, _ = get_feature_combos_for_paradigm(
+            name=paradigm_name, feature_map=feature_map, kind="Paradigm"
+        )
+        seen_markers = set()
+        roots = get_roots_for_paradigm(paradigm_name)
+        for combo in combos:
+            try:
+                markers = get_markers_for_paradigm(combo, paradigm_name, root=None)
+                for marker in markers:
+                    seen_markers.add(marker)
+            except Exception:
+                for root in roots[:5]:
+                    try:
+                        markers = get_markers_for_paradigm(combo, paradigm_name, root=root)
+                        for marker in markers:
+                            if isinstance(marker, tuple):
+                                seen_markers.add(marker[0])
+                            else:
+                                seen_markers.add(marker)
+                    except Exception:
+                        pass
+        
+        for marker in seen_markers:
+            m_key = get_marker_fst_key(marker)
+            child_keys[f"Marker/{m_key}"] = m_key
+    except Exception as e:
+        logger.warning(f"Error resolving marker dependencies for paradigm {paradigm_name}: {e}")
+        
+    return compute_cache_key(paradigm_name, "Paradigm", config_dirs, child_keys)
 
 
-def _load_paradigm(
-    name: str,
-) -> tuple[pynini.Fst, pynini.Fst, pynini.Fst, pynini.Fst] | None:
-    fsts = [load_fst("Paradigm", name, k) for k in _FST_KINDS]
-    return tuple(fsts) if all(f is not None for f in fsts) else None
+def _load_paradigm_cached(cache_key: str) -> tuple[pynini.Fst, pynini.Fst, pynini.Fst, pynini.Fst] | None:
+    from parC.yaml_utils.cache import CACHE_DIR
+    fsts = []
+    for k in _FST_KINDS:
+        path = os.path.join(CACHE_DIR, f"{cache_key}_{k}.fst")
+        if not os.path.exists(path):
+            return None
+        try:
+            fsts.append(pynini.Fst.read(path))
+        except Exception:
+            return None
+    return tuple(fsts)
 
 
-def _save_paradigm(
-    name: str,
+def _save_paradigm_cached(
+    cache_key: str,
     inflect: pynini.Fst,
     parse: pynini.Fst,
-    search_lexicon: tuple[pynini.Fst, pynini.Fst],
-    search_left_factor: tuple[pynini.Fst, pynini.Fst],
+    search_lexicon: pynini.Fst,
+    search_left_factor: pynini.Fst,
 ) -> None:
-    save_fst("Paradigm", name, "inflect", inflect)
-    save_fst("Paradigm", name, "parse", parse)
-    save_fst("Paradigm", name, "search_lexicon", search_lexicon)
-    save_fst("Paradigm", name, "search_left_factor", search_left_factor)
+    from parC.yaml_utils.cache import CACHE_DIR
+    inflect.write(os.path.join(CACHE_DIR, f"{cache_key}_inflect.fst"))
+    parse.write(os.path.join(CACHE_DIR, f"{cache_key}_parse.fst"))
+    search_lexicon.write(os.path.join(CACHE_DIR, f"{cache_key}_search_lexicon.fst"))
+    search_left_factor.write(os.path.join(CACHE_DIR, f"{cache_key}_search_left_factor.fst"))
 
 
 @observed_cache([get_yaml_dir()])
@@ -317,15 +366,16 @@ def _get_or_build(
     paradigm_name: str, graph_type: str, force_rebuild: bool = False
 ) -> pynini.Fst:
     graph_index = _FST_KINDS.index(graph_type)
-    if not force_rebuild and _paradigm_cache_valid(paradigm_name):
-        loaded = _load_paradigm(paradigm_name)
+    cache_key = get_paradigm_cache_key(paradigm_name)
+    if not force_rebuild:
+        loaded = _load_paradigm_cached(cache_key)
         if loaded is not None:
             return loaded[graph_index]
 
     inflect = build_inflect_graph(paradigm_name)
     parse = build_parse_graph(inflect)
     search_lexicon, search_left_factor = build_search_lexicon_and_leftfactor(inflect)
-    _save_paradigm(paradigm_name, inflect, parse, search_lexicon, search_left_factor)
+    _save_paradigm_cached(cache_key, inflect, parse, search_lexicon, search_left_factor)
 
     graph_tuple = (inflect, parse, search_lexicon, search_left_factor)
     return graph_tuple[graph_index]

@@ -29,7 +29,7 @@ from parC.grammar.acceptor_compilation import (
     get_sigma_star,
     get_symbol_table,
 )
-from parC.yaml_utils.cache import observed_cache
+from parC.yaml_utils.cache import observed_cache, compute_cache_key, get_cached_fst, save_cached_fst
 
 INVENTORY_DIR = kind_dir("Inventory")
 FEATURES_DIR = kind_dir("FeatureDefinitions")
@@ -149,6 +149,51 @@ Public API
 """
 
 
+import hashlib
+import json
+
+def get_rule_fst_key(rule_name: str) -> str:
+    rule_name = rule_name.removeprefix("$")
+    config_dirs = [
+        kind_dir("Rules"),
+        kind_dir("Patterns"),
+        kind_dir("Inventory"),
+        kind_dir("FeatureDefinitions"),
+    ]
+    child_keys = {}
+    rules = get_rules()
+    rule = rules.get(rule_name)
+    if isinstance(rule, RuleSequence):
+        for sub_rule_name in rule.rules:
+            child_keys[f"Rule/{sub_rule_name}"] = get_rule_fst_key(sub_rule_name)
+    from parC.grammar.acceptor_compilation import get_symbol_table_key
+    child_keys["symbol_table"] = get_symbol_table_key()
+    return compute_cache_key(rule_name, "Rule", config_dirs, child_keys)
+
+
+def get_marker_fst_key(marker: Marker) -> str:
+    config_dirs = [
+        kind_dir("Rules"),
+        kind_dir("Patterns"),
+        kind_dir("Inventory"),
+        kind_dir("FeatureDefinitions"),
+        kind_dir("FeatureMarkers"),
+        kind_dir("ContingentFeatureMarkers"),
+    ]
+    child_keys = {}
+    if hasattr(marker, "kind") and marker.kind == "rule":
+        rule_name = marker.value.removeprefix("$")
+        child_keys[f"Rule/{rule_name}"] = get_rule_fst_key(rule_name)
+    from parC.grammar.acceptor_compilation import get_symbol_table_key
+    child_keys["symbol_table"] = get_symbol_table_key()
+    
+    marker_dict = marker._asdict()
+    marker_json = json.dumps(marker_dict, sort_keys=True)
+    marker_hash = hashlib.sha256(marker_json.encode("utf-8")).hexdigest()
+    
+    return compute_cache_key(f"marker_{marker_hash}", "Marker", config_dirs, child_keys)
+
+
 @observed_cache(
     [
         kind_dir("Rules"),
@@ -159,6 +204,11 @@ Public API
 )
 def get_rule_fst(rule_name: str) -> pynini.Fst | list[pynini.Fst]:
     rule_name = rule_name.removeprefix("$")
+    cache_key = get_rule_fst_key(rule_name)
+    cached = get_cached_fst(cache_key)
+    if cached is not None:
+        return cached
+
     rules = get_rules()
     if rule_name not in rules:
         raise KeyError(
@@ -167,9 +217,20 @@ def get_rule_fst(rule_name: str) -> pynini.Fst | list[pynini.Fst]:
     rule = rules[rule_name]
 
     if isinstance(rule, RuleSequence):
-        return [get_rule_fst(name) for name in rule.rules]
+        result = [get_rule_fst(name) for name in rule.rules]
+        # rule sequence returns a flat list of FSTs
+        flat_result = []
+        for item in result:
+            if isinstance(item, list):
+                flat_result.extend(item)
+            else:
+                flat_result.append(item)
+        save_cached_fst(cache_key, flat_result)
+        return flat_result
 
-    return compile_rule(rule)
+    compiled = compile_rule(rule)
+    save_cached_fst(cache_key, compiled)
+    return compiled
 
 
 @observed_cache(
@@ -182,4 +243,10 @@ def get_rule_fst(rule_name: str) -> pynini.Fst | list[pynini.Fst]:
     ]
 )
 def get_marker_fst(marker: Marker) -> pynini.Fst:
-    return compile_marker(marker)
+    cache_key = get_marker_fst_key(marker)
+    cached = get_cached_fst(cache_key)
+    if cached is not None:
+        return cached
+    compiled = compile_marker(marker)
+    save_cached_fst(cache_key, compiled)
+    return compiled
