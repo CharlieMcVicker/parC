@@ -970,3 +970,22 @@ def get_stage_realization_fst(paradigm_name: str, stage: str) -> pynini.Fst:
 
 get_stage_transducer = get_stage_realization_fst
 
+
+@observed_cache([get_yaml_dir()])
+def get_final_surface_filter_fst(paradigm_name: str) -> pynini.Fst:
+    """
+    Obtains the phone, boundary, and word_edge FSAs from get_special_fsas(),
+    unions them, and applies .star.optimize() to create a strict filter acceptor.
+    """
+    special_fsas = get_special_fsas()
+    phone_fsa = special_fsas["phone"]
+    boundary_fsa = special_fsas["boundary"]
+    word_edge_fsa = special_fsas["word_edge"]
+
+    filter_fsa = pynini.union(phone_fsa, boundary_fsa, word_edge_fsa).star.optimize()
+    return filter_fsa
+
+
+get_final_surface_filter = get_final_surface_filter_fst
+
+

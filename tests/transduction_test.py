@@ -511,4 +511,30 @@ def test_get_stage_realization_fst():
     assert "habl" in result_no_tag_strs
 
 
+def test_get_final_surface_filter_fst():
+    from parC.grammar.paradigm_compilation import get_final_surface_filter_fst
+    from parC.grammar.acceptor_compilation import word_fsa, get_symbol_table
+
+    # 1. Compile the final surface filter fst
+    filter_fst = get_final_surface_filter_fst("verb_a_stem")
+    assert isinstance(filter_fst, pynini.Fst)
+
+    # 2. Check that valid strings are accepted
+    assert pynini.compose(word_fsa("habl-as"), filter_fst).num_states() > 0
+    assert pynini.compose(word_fsa("cant-as"), filter_fst).num_states() > 0
+
+    # 3. Check that strings with remaining tags are rejected
+    syms = get_symbol_table()
+    
+    # habl-as[OP=suffix_as]
+    tagged_1 = pynini.concat(word_fsa("habl-as"), pynini.accep("[OP=suffix_as]", token_type=syms))
+    assert pynini.compose(tagged_1, filter_fst).num_states() == 0
+
+    # habl[mood=indicative]
+    tagged_2 = pynini.concat(word_fsa("habl"), pynini.accep("[mood=indicative]", token_type=syms))
+    assert pynini.compose(tagged_2, filter_fst).num_states() == 0
+
+
+
+
 
