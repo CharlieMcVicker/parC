@@ -339,11 +339,14 @@ def _load_paradigm_cached(cache_key: str) -> tuple[pynini.Fst, pynini.Fst, pynin
     for k in _FST_KINDS:
         path = os.path.join(CACHE_DIR, f"{cache_key}_{k}.fst")
         if not os.path.exists(path):
+            logger.debug(f"Paradigm cache MISS for key {cache_key}: missing {k}.fst")
             return None
         try:
             fsts.append(pynini.Fst.read(path))
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Paradigm cache MISS for key {cache_key}: failed to read {k}.fst: {e}")
             return None
+    logger.debug(f"Paradigm cache HIT for key {cache_key}")
     return tuple(fsts)
 
 

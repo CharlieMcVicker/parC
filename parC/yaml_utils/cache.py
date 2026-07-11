@@ -68,22 +68,31 @@ def compute_cache_key(name: str, kind: str, config_dirs: list[str], child_keys: 
 def get_cached_fst(cache_key: str) -> pynini.Fst | list[pynini.Fst] | None:
     meta_path = os.path.join(CACHE_DIR, f"{cache_key}.meta")
     if not os.path.exists(meta_path):
+        logger.debug(f"FST cache MISS for key {cache_key}: meta file not found")
         return None
     try:
         with open(meta_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
+        kind = metadata.get("kind", "unknown")
+        name = metadata.get("name", "unknown")
         if metadata.get("is_sequence", False):
             fsts = []
             for i in range(metadata.get("sequence_len", 0)):
                 path = os.path.join(CACHE_DIR, f"{cache_key}_seq_{i}.fst")
                 if not os.path.exists(path):
+                    logger.debug(f"FST cache MISS for key {cache_key}: missing sequence FST at index {i}")
                     return None
                 fsts.append(pynini.Fst.read(path))
+            logger.debug(f"FST cache HIT for key {cache_key} (Kind: {kind}, Name: {name})")
             return fsts
         else:
             fst_path = os.path.join(CACHE_DIR, f"{cache_key}.fst")
             if os.path.exists(fst_path):
-                return pynini.Fst.read(fst_path)
+                fst = pynini.Fst.read(fst_path)
+                logger.debug(f"FST cache HIT for key {cache_key} (Kind: {kind}, Name: {name})")
+                return fst
+            else:
+                logger.debug(f"FST cache MISS for key {cache_key}: .fst file not found")
     except Exception as e:
         logger.warning(f"Failed to load cached FST for key {cache_key}: {e}")
     return None
@@ -117,20 +126,24 @@ def save_cached_fst(cache_key: str, fst: pynini.Fst | list[pynini.Fst]) -> None:
 def get_cached_pattern_fsts(cache_key: str) -> dict[str, pynini.Fst] | None:
     meta_path = os.path.join(CACHE_DIR, f"{cache_key}.meta")
     if not os.path.exists(meta_path):
+        logger.debug(f"Pattern FST cache MISS for key {cache_key}: meta file not found")
         return None
     try:
         with open(meta_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
         pattern_names = metadata.get("pattern_names", [])
         if not pattern_names:
+            logger.debug(f"Pattern FST cache MISS for key {cache_key}: no pattern names in meta")
             return None
         pattern_fsts = {}
         for name in pattern_names:
             safe_name = name.replace("<", "").replace(">", "").replace("/", "_")
             fst_path = os.path.join(CACHE_DIR, f"{cache_key}_pattern_{safe_name}.fst")
             if not os.path.exists(fst_path):
+                logger.debug(f"Pattern FST cache MISS for key {cache_key}: missing FST for pattern {name}")
                 return None
             pattern_fsts[name] = pynini.Fst.read(fst_path)
+        logger.debug(f"Pattern FST cache HIT for key {cache_key} ({len(pattern_names)} patterns)")
         return pattern_fsts
     except Exception as e:
         logger.warning(f"Failed to load cached pattern FSTs for key {cache_key}: {e}")
@@ -162,9 +175,12 @@ def get_cached_symbol_table(cache_key: str) -> pynini.SymbolTable | None:
     syms_path = os.path.join(CACHE_DIR, f"{cache_key}.syms")
     if os.path.exists(syms_path):
         try:
-            return pynini.SymbolTable.read(syms_path)
+            syms = pynini.SymbolTable.read(syms_path)
+            logger.debug(f"Symbol table cache HIT for key {cache_key}")
+            return syms
         except Exception as e:
             logger.warning(f"Failed to load cached symbol table from {syms_path}: {e}")
+    logger.debug(f"Symbol table cache MISS for key {cache_key}")
     return None
 
 def save_cached_symbol_table(cache_key: str, syms: pynini.SymbolTable) -> None:
