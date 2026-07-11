@@ -3,7 +3,7 @@ import os
 import pynini
 from loguru import logger
 
-from src.constants import get_yaml_dir
+from parC.constants import get_yaml_dir
 from functools import lru_cache, wraps
 from glob import glob
 from frozendict import frozendict
@@ -90,9 +90,7 @@ def get_hashable_args_and_kwargs(args, kwargs):
         try:
             hash(hashable_arg)
         except Exception as e:
-            raise ValueError(
-                f"Could not hash kwarg {value} with key {key}: {e}"
-            )
+            raise ValueError(f"Could not hash kwarg {value} with key {key}: {e}")
 
         hashable_args.append(hashable_arg)
 
@@ -106,9 +104,7 @@ def get_hashable_args_and_kwargs(args, kwargs):
         try:
             hash(hashable_value)
         except Exception as e:
-            raise ValueError(
-                f"Could not hash kwarg {value} with key {key}: {e}"
-            )
+            raise ValueError(f"Could not hash kwarg {value} with key {key}: {e}")
 
         hashable_kwargs[key] = hashable_value
 

@@ -25,20 +25,20 @@ import pynini
 from loguru import logger
 from pynini.lib import rewrite
 
-from src.yaml_utils.cache import (
+from parC.yaml_utils.cache import (
     is_syms_cache_valid,
     save_symbol_table,
     load_symbol_table,
     observed_cache,
 )
-from src.fst_utils import ReservedSymbolMixin as R
-from src.yaml_utils.models import Feature, Inventory, Pattern, Token
-from src.yaml_utils.yaml_server import (
+from parC.fst_utils import ReservedSymbolMixin as R
+from parC.yaml_utils.models import Feature, Inventory, Pattern, Token
+from parC.yaml_utils.yaml_server import (
     get_feature_array,
     get_inventory_items,
     get_patterns,
 )
-from src.yaml_utils.yaml_server import kind_dir
+from parC.yaml_utils.yaml_server import kind_dir
 
 """
 ## Symbol table
@@ -321,7 +321,7 @@ def _tokenize_str(
             None,
         )
         if match is None:
-            breakpoint()
+            # breakpoint()
             raise ValueError(
                 f"Unrecognized token at position {i} in '{s}' "
                 f"(inferred type: '{token_type}')"

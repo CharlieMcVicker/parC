@@ -9,14 +9,18 @@ from __future__ import annotations
 
 from loguru import logger
 
-from src.lexicon import get_roots, get_principal_part_for_all_roots, get_features_for_root
-from src.yaml_utils.models import (
+from parC.lexicon import (
+    get_roots,
+    get_principal_part_for_all_roots,
+    get_features_for_root,
+)
+from parC.yaml_utils.models import (
     Marker,
     UnorderedMarker,
     PrincipalPartMarker,
     resolve_marker,
 )
-from src.yaml_utils.yaml_server import get_markers, get_yaml_data_safe, get_feature_map
+from parC.yaml_utils.yaml_server import get_markers, get_yaml_data_safe, get_feature_map
 import itertools
 from frozendict import frozendict
 
@@ -28,6 +32,7 @@ def get_markers_for_paradigm(
     paradigm_name: str,
     include_features: bool = False,
     root: str | None = None,
+    lexical_features: FeatureComboType | dict[str, str] | None = None,
 ) -> list[Marker] | list[tuple[Marker, FeatureComboType | str]]:
     """
     Get all markers for a requested feature set for a given paradigm.
@@ -63,8 +68,14 @@ def get_markers_for_paradigm(
     lexical_feature_names = set(part_of_speech_data.get("lexical_features", []))
 
     if root:
-        lexical_features = set(get_features_for_root(part_of_speech, root))
-        feature_values |= lexical_features
+        lex_set = set(get_features_for_root(part_of_speech, root))
+        feature_values |= lex_set
+    if lexical_features:
+        if isinstance(lexical_features, (dict, frozendict)):
+            lex_set = set(lexical_features.items())
+        else:
+            lex_set = set(lexical_features)
+        feature_values |= lex_set
 
     markers = get_markers(
         feature_marker_files=marker_files,
@@ -75,8 +86,7 @@ def get_markers_for_paradigm(
 
     # any global markers defined in the paradigm should be applied to all feature combinations
     # check if current feature set has a principal part, if so we don't override
-    has_principal_part = any(
-        marker.kind == "principal_part" for marker, _ in markers)
+    has_principal_part = any(marker.kind == "principal_part" for marker, _ in markers)
     if "global_markers" in paradigm_data:
         markers.extend(
             (resolve_marker(marker), "global")
@@ -101,8 +111,7 @@ def get_markers_for_paradigm(
         marker, feature_set = marker_tuple
         if marker.kind == "principal_part":
             roots = get_roots(part_of_speech)
-            pps = get_principal_part_for_all_roots(
-                part_of_speech, marker.value)
+            pps = get_principal_part_for_all_roots(part_of_speech, marker.value)
             markers[i] = (
                 PrincipalPartMarker(
                     kind="string_map",
@@ -121,8 +130,7 @@ def get_markers_for_paradigm(
     stage_order.insert(0, "principal_part")
     markers.sort(
         key=lambda m: (
-            stage_order.index(
-                m[0].stage) if m[0].stage in stage_order else float('inf')
+            stage_order.index(m[0].stage) if m[0].stage in stage_order else float("inf")
         )
     )
 
@@ -144,9 +152,7 @@ def get_fixed_features_for_paradigm(
     return fixed_features
 
 
-def get_free_features_for_paradigm(
-    name: str, kind: str = "Paradigm"
-) -> list[str]:
+def get_free_features_for_paradigm(name: str, kind: str = "Paradigm") -> list[str]:
     paradigm_data = get_yaml_data_safe(kind=kind, yaml_basename=name)
     part_of_speech = paradigm_data["part_of_speech"]
     part_of_speech_data = get_yaml_data_safe(

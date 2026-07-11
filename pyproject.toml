@@ -30,11 +30,11 @@ dependencies = [
 dev = ["pytest", "ipykernel"]
 
 [project.scripts]
-parC = "src.api:run_app"
+parC = "parC.api:run_app"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["parC*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.csv", "*.yaml", "*.yml", "*.json", "*.txt", "*.xlsx"]

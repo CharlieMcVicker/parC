@@ -22,13 +22,13 @@ from loguru import logger
 import yaml
 from frozendict import frozendict
 
-from src.yaml_utils.schema_validation import (
+from parC.yaml_utils.schema_validation import (
     validate_yaml,
     CONFIG_KINDS,
     CONFIG_KIND_TO_PARDIR,
 )
-from src.constants import get_yaml_dir
-from src.yaml_utils.models import (
+from parC.constants import get_yaml_dir
+from parC.yaml_utils.models import (
     Inventory,
     InventoryItemMapType,
     InventoryItemContents,
@@ -68,8 +68,7 @@ def get_yaml_data_safe(kind: str, yaml_basename: str) -> dict:
 
     yaml_data = validate_yaml(target_kind=kind, data=yaml_data)
     if yaml_data is None:
-        logger.error(
-            f"Failed to validate YAML data from path: {yaml_file_path}")
+        logger.error(f"Failed to validate YAML data from path: {yaml_file_path}")
         return None
 
     return yaml_data
@@ -99,8 +98,7 @@ def get_yaml_kind(kind: str) -> dict[str, list[tuple[str, dict] | str]]:
     if kind not in CONFIG_KINDS:
         logger.error(f"Invalid config kind: {kind}")
         return None
-    yaml_pardir = os.path.join(
-        get_yaml_dir(), CONFIG_KIND_TO_PARDIR[kind], kind)
+    yaml_pardir = os.path.join(get_yaml_dir(), CONFIG_KIND_TO_PARDIR[kind], kind)
     yaml_files = [f for f in os.listdir(yaml_pardir) if f.endswith(".yaml")]
     result = {"valid": [], "invalid": []}
     for yaml_file in yaml_files:
@@ -156,8 +154,7 @@ def get_inventory_items() -> Inventory:
             item_phones, item_tags = extract_phones_and_tags(item_data)
             # BUG: not adding refs recursively
             if item_ref in inventory_items:
-                logger.exception(
-                    f"Duplicate item found: {item_ref} in {file_path}")
+                logger.exception(f"Duplicate item found: {item_ref} in {file_path}")
                 continue
             inventory_items[item_ref] = InventoryItemContents(
                 phones=tuple(item_phones), tags=tuple(item_tags)
@@ -218,8 +215,7 @@ def get_rules() -> dict[str, Rule]:
         for rule in yaml_data["rules"]:
             rule_name = rule.pop("name")
             if rule_name in rules:
-                logger.exception(
-                    f"Duplicate rule found: {rule_name} in {file_path}")
+                logger.exception(f"Duplicate rule found: {rule_name} in {file_path}")
                 continue
             rules[rule_name] = resolve_rule(rule)
 
@@ -267,8 +263,7 @@ def get_feature_array() -> tuple[Feature]:
     for _, yaml_data in features_yaml_data:
         for feature_name, feature_data in yaml_data["features"].items():
             features.append(
-                Feature(name=feature_name, values=tuple(
-                    feature_data) + ("unmarked",))
+                Feature(name=feature_name, values=tuple(feature_data) + ("unmarked",))
             )
 
     return tuple(features)
@@ -346,8 +341,7 @@ def validate_requested_marker_files(
         data = resolved_yaml[0]
         feature = data["feature"]
         if feature in covered_features:
-            logger.exception(
-                f"Found duplicate marker files for feature {feature}.")
+            logger.exception(f"Found duplicate marker files for feature {feature}.")
             return False
         if feature not in requested_features:
             logger.exception(
@@ -412,7 +406,9 @@ def get_markers(
     if lexical_feature_names is None:
         lexical_feature_names = set()
 
-    unexponed_features = {feature for feature, _ in feature_values if feature not in lexical_feature_names}
+    unexponed_features = {
+        feature for feature, _ in feature_values if feature not in lexical_feature_names
+    }
     markers = []
 
     # iterate through contingent feature markers and attempt
@@ -424,10 +420,12 @@ def get_markers(
         if result is not None:
             realization, matched_features = result
             contingent_feature_names = data.get("features", [])
-            
-            inflectional_contingent_names = [f for f in contingent_feature_names if f not in lexical_feature_names]
+
+            inflectional_contingent_names = [
+                f for f in contingent_feature_names if f not in lexical_feature_names
+            ]
             unexponed_features -= set(inflectional_contingent_names)
-            
+
             contingent_feature_values = {
                 (f, v) for f, v in matched_features if f not in lexical_feature_names
             }
@@ -456,11 +454,9 @@ def get_markers(
                 )
 
     if unexponed_features:
-        raise ValueError(
-            "Provided marker sets do not support requested feature set")
+        raise ValueError("Provided marker sets do not support requested feature set")
 
-    markers = [(resolve_marker(marker), feature_set)
-               for marker, feature_set in markers]
+    markers = [(resolve_marker(marker), feature_set) for marker, feature_set in markers]
     return markers
 
 

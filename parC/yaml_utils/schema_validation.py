@@ -6,7 +6,7 @@ import json
 from loguru import logger
 from jsonschema import validate, ValidationError
 from pathlib import Path
-from src.constants import SCHEMA_DIR
+from parC.constants import SCHEMA_DIR
 from typing import Literal, get_args
 from frozendict import frozendict
 
@@ -98,8 +98,7 @@ def get_referenced_content(ref_file_path: Path, object_path: str) -> tuple[dict,
     definitions_key, object_name = path_parts
 
     if not ref_file_path.exists():
-        raise FileNotFoundError(
-            f"Referenced schema file not found: {ref_file_path}")
+        raise FileNotFoundError(f"Referenced schema file not found: {ref_file_path}")
 
     with open(ref_file_path, "r", encoding="utf-8") as f:
         ref_content = json.load(f)

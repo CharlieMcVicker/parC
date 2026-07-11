@@ -1,4 +1,4 @@
-from src.yaml_utils.models import (
+from parC.yaml_utils.models import (
     Marker,
     Rule,
     SimpleRule,
@@ -12,24 +12,24 @@ from src.yaml_utils.models import (
     OperationTypeSingleString,
     UnorderedOperation,
 )
-from src.grammar.transducer_compilation import compile_marker
-from src.grammar.acceptor_compilation import (
+from parC.grammar.transducer_compilation import compile_marker
+from parC.grammar.acceptor_compilation import (
     fsa,
     word_fsa,
     fsm_strings,
     filter_strings_by_pattern,
-    get_pattern_fsts
+    get_pattern_fsts,
 )
-from src.grammar.marker_resolution import get_markers_for_paradigm
-from src.lexicon import get_roots_with_gloss
+from parC.grammar.marker_resolution import get_markers_for_paradigm
+from parC.lexicon import get_roots_with_gloss
 import pynini
 import yaml
 from copy import deepcopy
 import pytest
-from src.yaml_utils.yaml_server import get_yaml_data_safe, get_yaml_path
-from src.grammar.paradigm_compilation import inflect, parse, search, _get_or_build
-from src.grammar.transducer_compilation import get_rule_fst
-from src.constants import PROJECT_ROOT
+from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_yaml_path
+from parC.grammar.paradigm_compilation import inflect, parse, search, _get_or_build
+from parC.grammar.transducer_compilation import get_rule_fst
+from parC.constants import PROJECT_ROOT
 import os
 
 
@@ -86,7 +86,9 @@ def restore_segments_inventory():
 
 
 def test_rule_invalidation_from_rule_file(restore_diphthongization_rule):
-    def rule_input(): return word_fsa("pod")
+    def rule_input():
+        return word_fsa("pod")
+
     orig_rule_fst = get_rule_fst("diphthongization")
     orig_result = rule_input() @ orig_rule_fst
     orig_result = fsm_strings(orig_result, strip_all_tags=True)
@@ -137,7 +139,9 @@ def test_rule_invalidation_from_rule_file(restore_diphthongization_rule):
 
 
 def test_rule_invalidation_from_pattern_file(restore_domains_patterns):
-    def rule_input(): return word_fsa("pod")
+    def rule_input():
+        return word_fsa("pod")
+
     orig_rule_fst = get_rule_fst("diphthongization")
     orig_result = rule_input() @ orig_rule_fst
     orig_result = fsm_strings(orig_result, strip_all_tags=True)
@@ -190,7 +194,9 @@ def test_rule_invalidation_from_pattern_file(restore_domains_patterns):
 
 
 def test_rule_invalidation_from_inventory_file(restore_segments_inventory):
-    def rule_input(): return word_fsa("pod")
+    def rule_input():
+        return word_fsa("pod")
+
     orig_rule_fst = get_rule_fst("diphthongization")
     orig_result = rule_input() @ orig_rule_fst
     orig_result = fsm_strings(orig_result, strip_all_tags=True)
@@ -217,15 +223,11 @@ def test_rule_invalidation_from_inventory_file(restore_segments_inventory):
     # second test: edit the yaml data so rule output changes
 
     consonant_index = [
-        i
-        for i, nodes in enumerate(yaml_data["data"])
-        if nodes["ref"] == "<C>"
+        i for i, nodes in enumerate(yaml_data["data"]) if nodes["ref"] == "<C>"
     ][0]
     stop_index = [
         i
-        for i, nodes in enumerate(
-            yaml_data["data"][consonant_index]["children"]
-        )
+        for i, nodes in enumerate(yaml_data["data"][consonant_index]["children"])
         if nodes["ref"] == "<Stp>"
     ][0]
 
@@ -249,9 +251,10 @@ def test_pattern_invalidation_from_pattern_file(restore_vowel_patterns):
     orig_pattern = get_pattern_fsts()[pattern_str]
     orig_fsa = fsa(pattern_str)
 
-    def pattern_input(): return fsa("ie")
-    pattern_intersect = filter_strings_by_pattern(
-        pattern_input(), orig_pattern)
+    def pattern_input():
+        return fsa("ie")
+
+    pattern_intersect = filter_strings_by_pattern(pattern_input(), orig_pattern)
     fsa_intersect = filter_strings_by_pattern(pattern_input(), orig_fsa)
 
     assert pattern_intersect == ["ie"]
@@ -270,8 +273,7 @@ def test_pattern_invalidation_from_pattern_file(restore_vowel_patterns):
     new_pattern = get_pattern_fsts()[pattern_str]
     new_fsa = fsa(pattern_str)
 
-    pattern_intersect = filter_strings_by_pattern(
-        pattern_input(), new_pattern)
+    pattern_intersect = filter_strings_by_pattern(pattern_input(), new_pattern)
     fsa_intersect = filter_strings_by_pattern(pattern_input(), new_fsa)
 
     assert pattern_intersect == ["ie"]
@@ -296,8 +298,7 @@ def test_pattern_invalidation_from_pattern_file(restore_vowel_patterns):
     new_pattern = get_pattern_fsts()[pattern_str]
     new_fsa = fsa(pattern_str)
 
-    pattern_intersect = filter_strings_by_pattern(
-        pattern_input(), new_pattern)
+    pattern_intersect = filter_strings_by_pattern(pattern_input(), new_pattern)
     fsa_intersect = filter_strings_by_pattern(pattern_input(), new_fsa)
 
     assert pattern_intersect == []
@@ -306,8 +307,7 @@ def test_pattern_invalidation_from_pattern_file(restore_vowel_patterns):
     assert new_pattern is not orig_pattern
     assert new_fsa is not orig_fsa
 
-    pattern_intersect = filter_strings_by_pattern(
-        fsa("foo"), new_pattern)
+    pattern_intersect = filter_strings_by_pattern(fsa("foo"), new_pattern)
     fsa_intersect = filter_strings_by_pattern(fsa("foo"), new_fsa)
 
     assert pattern_intersect == ["foo"]

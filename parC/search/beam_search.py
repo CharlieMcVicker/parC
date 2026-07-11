@@ -2,8 +2,8 @@ from typing import NamedTuple
 import pynini
 import numpy as np
 from dataclasses import dataclass
-from src.search.beam_search_jit import intersect_beam_jit
-from src.search.edit_graph import ascii_table
+from parC.search.beam_search_jit import intersect_beam_jit
+from parC.search.edit_graph import ascii_table
 
 
 class WfsaCsr(NamedTuple):

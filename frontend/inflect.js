@@ -87,7 +87,12 @@ function populateRootSelect(select, roots) {
 }
 
 async function onRootChange(kind, name, root) {
-  if (!root) return;
+  if (!root) {
+    featuresContainer.querySelectorAll('.feature-select').forEach(sel => {
+      sel.disabled = false;
+    });
+    return;
+  }
   try {
     const lexFeatures = await fetchLexicalFeatures(kind, name, root);
     applyLexicalFeatures(lexFeatures);
@@ -102,6 +107,8 @@ function applyLexicalFeatures(lexFeatures) {
     if (val !== undefined) {
       sel.value = val;
       sel.disabled = true;
+    } else {
+      sel.disabled = false;
     }
   });
 }

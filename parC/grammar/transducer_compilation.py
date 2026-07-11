@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pynini
 
-from src.fst_utils import ReservedSymbolMixin as R
-from src.yaml_utils.models import (
+from parC.fst_utils import ReservedSymbolMixin as R
+from parC.yaml_utils.models import (
     Marker,
     Rule,
     SimpleRule,
@@ -22,14 +22,14 @@ from src.yaml_utils.models import (
     UnorderedMarker,
     PrincipalPartMarker,
 )
-from src.yaml_utils.yaml_server import get_rules, kind_dir
-from src.grammar.acceptor_compilation import (
+from parC.yaml_utils.yaml_server import get_rules, kind_dir
+from parC.grammar.acceptor_compilation import (
     fsa,
     word_fsa,
     get_sigma_star,
     get_symbol_table,
 )
-from src.yaml_utils.cache import observed_cache
+from parC.yaml_utils.cache import observed_cache
 
 INVENTORY_DIR = kind_dir("Inventory")
 FEATURES_DIR = kind_dir("FeatureDefinitions")
@@ -42,8 +42,7 @@ RULES_DIR = kind_dir("Rules")
 
 def _compile_simple_rule(rule: SimpleRule) -> pynini.Fst:
     sigma_star = get_sigma_star()
-    tau = pynini.cross(fsa(rule.input_pattern),
-                       fsa(rule.output_pattern)).optimize()
+    tau = pynini.cross(fsa(rule.input_pattern), fsa(rule.output_pattern)).optimize()
     l = fsa(rule.left_context) if rule.left_context else ""
     r = fsa(rule.right_context) if rule.right_context else ""
     return pynini.cdrewrite(tau, l, r, sigma_star)
@@ -142,6 +141,8 @@ def compile_marker(marker: Marker) -> pynini.Fst:
         )
     raise ValueError(f"Unknown marker: {marker!r}")
 
+
+from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
 
 """
 Public API

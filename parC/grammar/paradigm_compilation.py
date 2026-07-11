@@ -18,19 +18,19 @@ from pynini.lib import pynutil
 from typing import NamedTuple
 from frozendict import frozendict
 
-from src.yaml_utils.cache import is_fst_cache_valid, save_fst, load_fst, observed_cache
-from src.fst_utils import ReservedSymbolMixin as R
-from src.fst_utils import stringify_features
-from src.constants import get_yaml_dir
-from src.lexicon import get_gloss_for_root, get_roots, get_roots_with_lexical_features
-from src.yaml_utils.schema_validation import CONFIG_KIND_TO_PARDIR
-from src.yaml_utils.yaml_server import (
+from parC.yaml_utils.cache import is_fst_cache_valid, save_fst, load_fst, observed_cache
+from parC.fst_utils import ReservedSymbolMixin as R
+from parC.fst_utils import stringify_features
+from parC.constants import get_yaml_dir
+from parC.lexicon import get_gloss_for_root, get_roots, get_roots_with_lexical_features
+from parC.yaml_utils.schema_validation import CONFIG_KIND_TO_PARDIR
+from parC.yaml_utils.yaml_server import (
     get_feature_map,
     get_yaml_kind,
     get_yaml_data_safe,
     kind_dir,
 )
-from src.grammar.acceptor_compilation import (
+from parC.grammar.acceptor_compilation import (
     fsa,
     fsm_strings,
     fsm_strings_and_weights,
@@ -40,13 +40,12 @@ from src.grammar.acceptor_compilation import (
     get_symbol_table,
     filter_strings_by_pattern,
 )
-from src.grammar.marker_resolution import (
+from parC.grammar.marker_resolution import (
     get_feature_combos_for_paradigm,
     get_features_for_paradigm,
     get_markers_for_paradigm,
     get_fixed_features_for_paradigm,
 )
-from src.grammar.transducer_compilation import get_marker_fst
 
 EDIT_BOUND = 5
 EDIT_COST = 1.0
@@ -58,6 +57,8 @@ EDIT_COST = 1.0
 
 
 def _apply_markers(stem_fst: pynini.Fst, markers: list) -> pynini.Fst:
+    from parC.grammar.transducer_compilation import get_marker_fst
+
     current = stem_fst
     for marker in markers:
         current = pynini.compose(current, get_marker_fst(marker))
@@ -117,7 +118,8 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
         for feature_values in combos:
             try:
                 markers = get_markers_for_paradigm(
-                    feature_values, paradigm_name, root=root)
+                    feature_values, paradigm_name, root=root
+                )
                 inflected_output = pynini.project(
                     _apply_markers(root_fsa, markers), project_type="output"
                 )
@@ -129,9 +131,101 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
 
             feature_str = stringify_features(feature_values)
             inflect_input = (
-                pynini.concat(root_fsa, fsa(feature_str)
-                              ) if feature_str else root_fsa
+                pynini.concat(root_fsa, fsa(feature_str)) if feature_str else root_fsa
             )
+            inflect_fsts.append(
+                pynini.cross(inflect_input, inflected_output).optimize()
+            )
+
+    if not inflect_fsts:
+        return pynini.Fst()
+    return pynini.union(*inflect_fsts).optimize()
+
+
+def build_inflect_graph_for_root_regex(
+    paradigm_name: str,
+    root_regex: str | pynini.Fst,
+    lexical_features: FeatureComboType | dict[str, str] | None = None,
+    infer_lexical_features: bool = False,
+) -> pynini.Fst:
+    """root_regex[lexical_features][inflectional_features] → surface form."""
+    import itertools
+
+    if isinstance(root_regex, str):
+        root_fsa = fsa(R.bow + root_regex + R.eow)
+    else:
+        root_fsa = root_regex
+
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if paradigm_data is None:
+        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
+
+    feature_map = get_feature_map()
+    combos, _, _ = get_feature_combos_for_paradigm(
+        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
+    )
+
+    if infer_lexical_features:
+        part_of_speech = paradigm_data["part_of_speech"]
+        part_of_speech_data = get_yaml_data_safe(
+            yaml_basename=part_of_speech, kind="PartOfSpeech"
+        )
+        lexical_feature_names = part_of_speech_data.get("lexical_features", [])
+
+        lexical_value_lists = []
+        for fname in lexical_feature_names:
+            if fname not in feature_map:
+                logger.warning(
+                    f"Lexical feature '{fname}' not in feature map — skipping."
+                )
+                continue
+            lexical_value_lists.append([(fname, v) for v in feature_map[fname]])
+
+        if not lexical_value_lists:
+            lexical_combos = [set()]
+        else:
+            lexical_combos = [
+                set(combo_tuples)
+                for combo_tuples in itertools.product(*lexical_value_lists)
+            ]
+    else:
+        if lexical_features:
+            if isinstance(lexical_features, (dict, frozendict)):
+                lex_set = set(lexical_features.items())
+            else:
+                lex_set = set(lexical_features)
+            lexical_combos = [lex_set]
+        else:
+            lexical_combos = [set()]
+
+    inflect_fsts: list[pynini.Fst] = []
+    for lexical_combo in lexical_combos:
+        for feature_values in combos:
+            try:
+                markers = get_markers_for_paradigm(
+                    feature_values,
+                    paradigm_name,
+                    root=None,
+                    lexical_features=lexical_combo,
+                )
+                inflected_output = pynini.project(
+                    _apply_markers(root_fsa, markers), project_type="output"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Skipping {paradigm_name} root_regex={root_regex} fv={feature_values} lex={lexical_combo}: {e}"
+                )
+                continue
+
+            lexical_str = stringify_features(lexical_combo)
+            inflectional_str = stringify_features(feature_values)
+
+            inflect_input = root_fsa
+            if infer_lexical_features and lexical_str:
+                inflect_input = pynini.concat(inflect_input, fsa(lexical_str))
+            if inflectional_str:
+                inflect_input = pynini.concat(inflect_input, fsa(inflectional_str))
+
             inflect_fsts.append(
                 pynini.cross(inflect_input, inflected_output).optimize()
             )
@@ -230,12 +324,8 @@ def _get_or_build(
 
     inflect = build_inflect_graph(paradigm_name)
     parse = build_parse_graph(inflect)
-    search_lexicon, search_left_factor = build_search_lexicon_and_leftfactor(
-        inflect
-    )
-    _save_paradigm(
-        paradigm_name, inflect, parse, search_lexicon, search_left_factor
-    )
+    search_lexicon, search_left_factor = build_search_lexicon_and_leftfactor(inflect)
+    _save_paradigm(paradigm_name, inflect, parse, search_lexicon, search_left_factor)
 
     graph_tuple = (inflect, parse, search_lexicon, search_left_factor)
     return graph_tuple[graph_index]
@@ -275,8 +365,7 @@ def parse(form: str, kind: str = "Paradigm", name: str = "") -> list[dict]:
         feat_matches = re.findall(r"\[([^=\]]+)=([^\]]+)\]", s)
         root = re.sub(r"\[[^\]]+\]", "", s).strip()
         gloss = get_gloss_for_root(lexicon_basename, root)
-        parses.append({"root": root, "features": dict(
-            feat_matches), "gloss": gloss})
+        parses.append({"root": root, "features": dict(feat_matches), "gloss": gloss})
 
     return parses
 
@@ -291,8 +380,7 @@ def inflect(
     if isinstance(feature_values, (dict, frozendict)):
         feature_values = set(feature_values.items())
 
-    fixed_features = get_fixed_features_for_paradigm(
-        name=name, kind="Paradigm")
+    fixed_features = get_fixed_features_for_paradigm(name=name, kind="Paradigm")
     feature_values |= fixed_features
     features = set(feature for feature, _ in feature_values)
     expected_features = get_features_for_paradigm(name)
@@ -345,8 +433,7 @@ def inflect_stages(
     if isinstance(feature_values, (dict, frozendict)):
         feature_values = set(feature_values.items())
 
-    fixed_features = get_fixed_features_for_paradigm(
-        name=name, kind="Paradigm")
+    fixed_features = get_fixed_features_for_paradigm(name=name, kind="Paradigm")
     feature_values |= fixed_features
     features = set(feature for feature, _ in feature_values)
     expected_features = get_features_for_paradigm(name)
@@ -372,8 +459,7 @@ def inflect_stages(
             current_fst, nshortest=5, strip_word_edge_symbols=True
         )
         marker_value = (
-            marker.display_value if hasattr(
-                marker, "display_value") else marker.value
+            marker.display_value if hasattr(marker, "display_value") else marker.value
         )
         current_stage = InflectStage(
             root=root,
@@ -417,15 +503,13 @@ def search(
     form_fsa = word_fsa(form)
     left_factor_lattice = pynini.compose(form_fsa, left_factor).optimize()
     edit_graph = pynini.compose(left_factor_lattice, search_lexicon)
-    hits = fsm_strings_and_weights(
-        edit_graph, strip_all_tags=True, nshortest=nshortest)
+    hits = fsm_strings_and_weights(edit_graph, strip_all_tags=True, nshortest=nshortest)
 
     if do_parse:
         parses = []
         for hit, weight in hits:
-            current_parse = parse(hit, kind=kind, name=name)
-            [parse_item.update(edit_distance=weight)
-             for parse_item in current_parse]
+            current_parse = [item.copy() for item in parse(hit, kind=kind, name=name)]
+            [parse_item.update(edit_distance=weight) for parse_item in current_parse]
             [parse_item.update(form=hit) for parse_item in current_parse]
             parses.extend(current_parse)
         return parses

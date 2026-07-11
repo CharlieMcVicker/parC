@@ -1,7 +1,7 @@
 from loguru import logger
 
-from src.constants import get_yaml_dir
-from src.yaml_utils.yaml_server import get_yaml_data_safe
+from parC.constants import get_yaml_dir
+from parC.yaml_utils.yaml_server import get_yaml_data_safe
 import pandas as pd
 import os
 import numpy as np
@@ -30,8 +30,7 @@ def init_lexicon(lexicon_basename: str, lexicon_path: str) -> None:
     )
     lexical_features = part_of_speech.get("lexical_features", [])
     principal_parts = part_of_speech.get("principal_parts", [])
-    df = pd.DataFrame(columns=["root", "gloss"] +
-                      lexical_features + principal_parts)
+    df = pd.DataFrame(columns=["root", "gloss"] + lexical_features + principal_parts)
     os.makedirs(os.path.dirname(lexicon_path), exist_ok=True)
     df.to_csv(lexicon_path, index=False)
 

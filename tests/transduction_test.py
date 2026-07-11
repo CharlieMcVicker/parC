@@ -1,4 +1,4 @@
-from src.yaml_utils.models import (
+from parC.yaml_utils.models import (
     Marker,
     Rule,
     SimpleRule,
@@ -12,21 +12,21 @@ from src.yaml_utils.models import (
     OperationTypeSingleString,
     UnorderedOperation,
 )
-from src.grammar.transducer_compilation import compile_marker
-from src.grammar.acceptor_compilation import (
+from parC.grammar.transducer_compilation import compile_marker
+from parC.grammar.acceptor_compilation import (
     fsa,
     word_fsa,
     fsm_strings,
     filter_strings_by_pattern,
 )
-from src.grammar.marker_resolution import get_markers_for_paradigm
-from src.lexicon import get_roots_with_gloss
+from parC.grammar.marker_resolution import get_markers_for_paradigm
+from parC.lexicon import get_roots_with_gloss
 import pynini
 
-from src.yaml_utils.yaml_server import get_yaml_data_safe
-from src.grammar.paradigm_compilation import inflect, parse, search, _get_or_build
+from parC.yaml_utils.yaml_server import get_yaml_data_safe
+from parC.grammar.paradigm_compilation import inflect, parse, search, _get_or_build
 
-from src.constants import PROJECT_ROOT
+from parC.constants import PROJECT_ROOT
 import os
 import pytest
 
@@ -95,8 +95,7 @@ def test_2sg_a_class():
     part_of_speech = get_yaml_data_safe(kind="Paradigm", yaml_basename="$verb_a_stem")[
         "part_of_speech"
     ]
-    roots = get_roots_with_gloss(
-        lexicon_basename=part_of_speech, gloss="speak")
+    roots = get_roots_with_gloss(lexicon_basename=part_of_speech, gloss="speak")
     assert roots == ["habl"]
 
     root = roots[0]
@@ -111,16 +110,14 @@ def test_2sg_a_class():
 
     # here we invalidate the cache whenever the test is run
     # TODO: directly test automatic cache invalidation when source files are changed
-    _get_or_build(graph_type="inflect",
-                  paradigm_name="verb_a_stem", force_rebuild=True)
+    _get_or_build(graph_type="inflect", paradigm_name="verb_a_stem", force_rebuild=True)
 
     inflect_result = inflect(
         root=root, feature_values=feature_values, name="verb_a_stem"
     )
     assert inflect_result == result_strings
 
-    _get_or_build(graph_type="parse",
-                  paradigm_name="verb_a_stem", force_rebuild=True)
+    _get_or_build(graph_type="parse", paradigm_name="verb_a_stem", force_rebuild=True)
 
     parse_result = parse(expected_form, kind="Paradigm", name="verb_a_stem")
     expected_parse = {
@@ -141,17 +138,17 @@ def test_2sg_a_class():
 
 
 def test_contingent_lexical_submapping():
-    from src.constants import get_yaml_dir
-    from src.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
+    from parC.constants import get_yaml_dir
+    from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
     import yaml
-    
+
     yaml_dir = get_yaml_dir()
     contingent_dir = os.path.join(yaml_dir, "Exponence", "ContingentFeatureMarkers")
     paradigm_dir = os.path.join(yaml_dir, "Morphotactics", "Paradigm")
-    
+
     contingent_path = os.path.join(contingent_dir, "class_test_contingent.yaml")
     paradigm_path = os.path.join(paradigm_dir, "verb_class_test.yaml")
-    
+
     verb_pos = get_yaml_data_safe(kind="PartOfSpeech", yaml_basename="verb")
     lex_feats = verb_pos.get("lexical_features", [])
     pos_feats = verb_pos.get("features", [])
@@ -163,11 +160,7 @@ def test_contingent_lexical_submapping():
         root1, root2 = "habl", "com"
         val1_1, val1_2 = "-o_a", "-as_a"
         val2_1, val2_2 = "-o_e", "-es_e"
-        feat_markers = {
-            "person_number": None,
-            "tense": "present",
-            "mood": "indicative"
-        }
+        feat_markers = {"person_number": None, "tense": "present", "mood": "indicative"}
     elif "prefix_class" in lex_feats:
         class_name = "prefix_class"
         feature = "aspect" if "aspect" in pos_feats else "person_number"
@@ -195,53 +188,286 @@ def test_contingent_lexical_submapping():
         "markers": {
             class1: {
                 val_key1: [{"kind": "suffix", "value": val1_1}],
-                val_key2: [{"kind": "suffix", "value": val1_2}]
+                val_key2: [{"kind": "suffix", "value": val1_2}],
             },
             class2: {
                 val_key1: [{"kind": "suffix", "value": val2_1}],
-                val_key2: [{"kind": "suffix", "value": val2_2}]
-            }
-        }
+                val_key2: [{"kind": "suffix", "value": val2_2}],
+            },
+        },
     }
-    
+
     paradigm_data = {
         "kind": "Paradigm",
         "part_of_speech": "$verb",
         "feature_markers": feat_markers,
-        "contingent_markers": [
-            "$class_test_contingent"
-        ]
+        "contingent_markers": ["$class_test_contingent"],
     }
-    
+
     os.makedirs(contingent_dir, exist_ok=True)
     os.makedirs(paradigm_dir, exist_ok=True)
-    
+
     with open(contingent_path, "w", encoding="utf-8") as f:
         yaml.dump(contingent_data, f)
-        
+
     with open(paradigm_path, "w", encoding="utf-8") as f:
         yaml.dump(paradigm_data, f)
-        
+
     try:
-        _get_or_build(graph_type="inflect", paradigm_name="verb_class_test", force_rebuild=True)
-        
+        _get_or_build(
+            graph_type="inflect", paradigm_name="verb_class_test", force_rebuild=True
+        )
+
         # Test root1
         res_root1_1 = inflect(root1, {feature: val_key1}, "verb_class_test")
         assert f"{root1}{val1_1}" in res_root1_1
-        
+
         res_root1_2 = inflect(root1, {feature: val_key2}, "verb_class_test")
         assert f"{root1}{val1_2}" in res_root1_2
-        
+
         # Test root2
         res_root2_1 = inflect(root2, {feature: val_key1}, "verb_class_test")
         assert f"{root2}{val2_1}" in res_root2_1
-        
+
         res_root2_2 = inflect(root2, {feature: val_key2}, "verb_class_test")
         assert f"{root2}{val2_2}" in res_root2_2
-        
+
     finally:
         if os.path.exists(contingent_path):
             os.remove(contingent_path)
         if os.path.exists(paradigm_path):
             os.remove(paradigm_path)
 
+
+def test_build_inflect_graph_for_root_regex():
+    from parC.grammar.transducer_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
+    from parC.fst_utils import stringify_features
+    import pynini
+
+    paradigm_name = "verb_a_stem"
+    root_pattern = "cant"  # Represents a root string
+
+    # Build the inflect graph using the root regex
+    inflect_graph = build_inflect_graph_for_root_regex(paradigm_name, root_pattern)
+    assert isinstance(inflect_graph, pynini.Fst)
+
+    feature_values = {
+        "person_number": "2sg",
+        "tense": "present",
+        "mood": "indicative",
+    }
+    feature_str = stringify_features(feature_values)
+
+    input_fsa = pynini.concat(word_fsa("cant"), fsa(feature_str))
+    output_lattice = pynini.compose(input_fsa, inflect_graph).optimize()
+    output_lattice = pynini.project(output_lattice, project_type="output")
+    surface_forms = fsm_strings(output_lattice, strip_all_tags=True)
+
+    assert "cant-as" in surface_forms
+
+
+def test_build_inflect_graph_for_root_regex_with_lexical_features():
+    from parC.constants import get_yaml_dir
+    from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
+    from parC.grammar.transducer_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
+    from parC.fst_utils import stringify_features
+    import yaml
+    import pynini
+
+    yaml_dir = get_yaml_dir()
+    contingent_dir = os.path.join(yaml_dir, "Exponence", "ContingentFeatureMarkers")
+    paradigm_dir = os.path.join(yaml_dir, "Morphotactics", "Paradigm")
+
+    contingent_path = os.path.join(contingent_dir, "regex_class_test_contingent.yaml")
+    paradigm_path = os.path.join(paradigm_dir, "verb_regex_class_test.yaml")
+
+    verb_pos = get_yaml_data_safe(kind="PartOfSpeech", yaml_basename="verb")
+    lex_feats = verb_pos.get("lexical_features", [])
+    pos_feats = verb_pos.get("features", [])
+
+    if "conjugation_class" in lex_feats:
+        class_name = "conjugation_class"
+        feature = "person_number"
+        class1, class2 = "a_class", "e_class"
+        val1_1 = "-o_a"
+        val2_1 = "-o_e"
+        feat_markers = {"person_number": None, "tense": "present", "mood": "indicative"}
+    elif "prefix_class" in lex_feats:
+        class_name = "prefix_class"
+        feature = "aspect" if "aspect" in pos_feats else "person_number"
+        class1, class2 = "a_stem", "cons_stem"
+        val1_1 = "-o_a"
+        val2_1 = "-o_e"
+        feat_markers = {feature: None}
+        for f in pos_feats:
+            if f != feature:
+                fmap = get_feature_map()
+                feat_markers[f] = fmap[f][0] if f in fmap and fmap[f] else "unmarked"
+    else:
+        pytest.skip("No recognized lexical features for testing")
+        return
+
+    fmap = get_feature_map()
+    feat_vals = fmap.get(feature, ["1sg", "2sg"])
+    val_key1 = feat_vals[0]
+
+    contingent_data = {
+        "kind": "ContingentFeatureMarkers",
+        "features": [class_name, feature],
+        "markers": {
+            class1: {
+                val_key1: [{"kind": "suffix", "value": val1_1}],
+            },
+            class2: {
+                val_key1: [{"kind": "suffix", "value": val2_1}],
+            },
+        },
+    }
+
+    paradigm_data = {
+        "kind": "Paradigm",
+        "part_of_speech": "$verb",
+        "feature_markers": feat_markers,
+        "contingent_markers": ["$regex_class_test_contingent"],
+    }
+
+    os.makedirs(contingent_dir, exist_ok=True)
+    os.makedirs(paradigm_dir, exist_ok=True)
+
+    with open(contingent_path, "w", encoding="utf-8") as f:
+        yaml.dump(contingent_data, f)
+
+    with open(paradigm_path, "w", encoding="utf-8") as f:
+        yaml.dump(paradigm_data, f)
+
+    try:
+        # Build using root regex AND custom lexical features for class1
+        inflect_graph_class1 = build_inflect_graph_for_root_regex(
+            "verb_regex_class_test", "cant", lexical_features={class_name: class1}
+        )
+        assert isinstance(inflect_graph_class1, pynini.Fst)
+
+        # Test inflection
+        feature_values = {feature: val_key1}
+        for f, v in feat_markers.items():
+            if v is not None:
+                feature_values[f] = v
+
+        feature_str = stringify_features(feature_values)
+        input_fsa = pynini.concat(word_fsa("cant"), fsa(feature_str))
+        output_lattice = pynini.compose(input_fsa, inflect_graph_class1).optimize()
+        output_lattice = pynini.project(output_lattice, project_type="output")
+        surface_forms = fsm_strings(output_lattice, strip_all_tags=True)
+
+        assert f"cant{val1_1}" in surface_forms
+
+    finally:
+        if os.path.exists(contingent_path):
+            os.remove(contingent_path)
+        if os.path.exists(paradigm_path):
+            os.remove(paradigm_path)
+
+
+def test_build_inflect_graph_for_root_regex_lexical_inference():
+    from parC.constants import get_yaml_dir
+    from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
+    from parC.grammar.transducer_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
+    from parC.fst_utils import stringify_features
+    import yaml
+    import pynini
+
+    yaml_dir = get_yaml_dir()
+    contingent_dir = os.path.join(yaml_dir, "Exponence", "ContingentFeatureMarkers")
+    paradigm_dir = os.path.join(yaml_dir, "Morphotactics", "Paradigm")
+
+    contingent_path = os.path.join(contingent_dir, "inference_test_contingent.yaml")
+    paradigm_path = os.path.join(paradigm_dir, "verb_inference_test.yaml")
+
+    verb_pos = get_yaml_data_safe(kind="PartOfSpeech", yaml_basename="verb")
+    lex_feats = verb_pos.get("lexical_features", [])
+    pos_feats = verb_pos.get("features", [])
+
+    if "conjugation_class" in lex_feats:
+        class_name = "conjugation_class"
+        feature = "person_number"
+        class1, class2 = "a_class", "e_class"
+        val1_1 = "-o_a"
+        val2_1 = "-o_e"
+        feat_markers = {"person_number": None, "tense": "present", "mood": "indicative"}
+    elif "prefix_class" in lex_feats:
+        class_name = "prefix_class"
+        feature = "aspect" if "aspect" in pos_feats else "person_number"
+        class1, class2 = "a_stem", "cons_stem"
+        val1_1 = "-o_a"
+        val2_1 = "-o_e"
+        feat_markers = {feature: None}
+        for f in pos_feats:
+            if f != feature:
+                fmap = get_feature_map()
+                feat_markers[f] = fmap[f][0] if f in fmap and fmap[f] else "unmarked"
+    else:
+        pytest.skip("No recognized lexical features for testing")
+        return
+
+    fmap = get_feature_map()
+    feat_vals = fmap.get(feature, ["1sg", "2sg"])
+    val_key1 = feat_vals[0]
+
+    contingent_data = {
+        "kind": "ContingentFeatureMarkers",
+        "features": [class_name, feature],
+        "markers": {
+            class1: {
+                val_key1: [{"kind": "suffix", "value": val1_1}],
+            },
+            class2: {
+                val_key1: [{"kind": "suffix", "value": val2_1}],
+            },
+        },
+    }
+
+    paradigm_data = {
+        "kind": "Paradigm",
+        "part_of_speech": "$verb",
+        "feature_markers": feat_markers,
+        "contingent_markers": ["$inference_test_contingent"],
+    }
+
+    os.makedirs(contingent_dir, exist_ok=True)
+    os.makedirs(paradigm_dir, exist_ok=True)
+
+    with open(contingent_path, "w", encoding="utf-8") as f:
+        yaml.dump(contingent_data, f)
+
+    with open(paradigm_path, "w", encoding="utf-8") as f:
+        yaml.dump(paradigm_data, f)
+
+    try:
+        # Build using root regex AND infer_lexical_features=True
+        inflect_graph = build_inflect_graph_for_root_regex(
+            "verb_inference_test", "cant", infer_lexical_features=True
+        )
+        assert isinstance(inflect_graph, pynini.Fst)
+
+        # Invert to build a parse graph
+        parse_graph = pynini.invert(inflect_graph).optimize()
+
+        # Let's parse the surface form cant-o_a
+        surface_fsa = word_fsa(f"cant{val1_1}")
+        parse_lattice = pynini.compose(surface_fsa, parse_graph).optimize()
+        parse_strs = fsm_strings(parse_lattice)
+
+        # The parse string must map to: [BOW]cant[EOW][conjugation_class=a_class][person_number=1sg]...
+        # Let's verify that class1 is present in the parse output strings!
+        assert any(f"[{class_name}={class1}]" in s for s in parse_strs)
+        # And class2 should NOT be in the parse output strings (since it corresponds to val2_1)
+        assert not any(f"[{class_name}={class2}]" in s for s in parse_strs)
+
+    finally:
+        if os.path.exists(contingent_path):
+            os.remove(contingent_path)
+        if os.path.exists(paradigm_path):
+            os.remove(paradigm_path)

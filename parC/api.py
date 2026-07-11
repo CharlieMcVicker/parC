@@ -16,22 +16,22 @@ from pydantic import BaseModel
 from pynini.lib import rewrite
 import uvicorn
 
-from src.grammar.acceptor_compilation import (
+from parC.grammar.acceptor_compilation import (
     fsa,
     word_fsa,
     fsm_strings,
     get_symbol_table,
 )
-from src.grammar.paradigm_compilation import (
+from parC.grammar.paradigm_compilation import (
     inflect_stages,
     parse,
     inflect,
     search,
     get_roots_for_paradigm,
 )
-from src.grammar.transducer_compilation import get_rule_fst
-from src.grammar.marker_resolution import get_free_features_for_paradigm
-from src.yaml_utils.yaml_server import (
+from parC.grammar.transducer_compilation import get_rule_fst
+from parC.grammar.marker_resolution import get_free_features_for_paradigm
+from parC.yaml_utils.yaml_server import (
     get_yaml_kind,
     get_inventory_items,
     get_feature_map,
@@ -40,17 +40,17 @@ from src.yaml_utils.yaml_server import (
     get_inflection_stages,
     get_yaml_data_safe,
 )
-from src.lexicon import (
+from parC.lexicon import (
     get_roots,
     get_features_for_root,
 )
-from src.constants import get_yaml_dir
+from parC.constants import get_yaml_dir
 
 app = FastAPI()
 
 
 def run_app():
-    uvicorn.run("src.api:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("parC.api:app", host="127.0.0.1", port=8000, reload=True)
 
 
 @app.get("/grammar-stats")

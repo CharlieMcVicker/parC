@@ -22,4 +22,4 @@ if not get_yaml_dir():
     sys.exit("No config directory selected.")
 
 if __name__ == "__main__":
-    uvicorn.run("src.api:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("parC.api:app", host="127.0.0.1", port=8000, reload=True)
