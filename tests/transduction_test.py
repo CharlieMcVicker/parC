@@ -505,7 +505,7 @@ def test_get_label_to_marker_fst():
     assert result.num_states() > 0
     result_strs = fsm_strings(result, strip_all_tags=False)
     assert len(result_strs) == 1
-    assert "[OP=suffix_as]" in result_strs[0]
+    assert "<exp.suffix=-as>" in result_strs[0]
 
 
 def test_get_stage_realization_fst():
@@ -520,7 +520,7 @@ def test_get_stage_realization_fst():
     # 2. Let's test a mapping: habl[OP=suffix_as] should map to habl-as
     syms = get_symbol_table()
     input_fsa = word_fsa("habl")
-    input_fsa = pynini.concat(input_fsa, pynini.accep("[OP=suffix_as]", token_type=syms))
+    input_fsa = pynini.concat(input_fsa, pynini.accep("<exp.suffix=-as>", token_type=syms))
 
     result = pynini.compose(input_fsa, stage_fst)
     assert result.num_states() > 0
@@ -551,8 +551,8 @@ def test_get_final_surface_filter_fst():
     # 3. Check that strings with remaining tags are rejected
     syms = get_symbol_table()
     
-    # habl-as[OP=suffix_as]
-    tagged_1 = pynini.concat(word_fsa("habl-as"), pynini.accep("[OP=suffix_as]", token_type=syms))
+    # habl-as<exp.suffix=-as>
+    tagged_1 = pynini.concat(word_fsa("habl-as"), pynini.accep("<exp.suffix=-as>", token_type=syms))
     assert pynini.compose(tagged_1, filter_fst).num_states() == 0
 
     # habl[mood=indicative]

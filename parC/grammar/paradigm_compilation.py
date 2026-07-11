@@ -933,6 +933,60 @@ def get_label_to_marker_fst(
 get_exponence_transducer = get_label_to_marker_fst
 
 
+def get_marker_swapping_transducer(marker: Marker) -> pynini.Fst:
+    """
+    Handles prefix and suffix cdrewrite-based swapping/insertion relative to [BOW] and [EOW],
+    and falls back to gated-composition + tag deletion for rule markers.
+    """
+    from parC.grammar.transducer_compilation import get_marker_fst, get_trigger_fsa
+    from parC.grammar.op_tags import get_op_tag
+    from parC.grammar.acceptor_compilation import get_symbol_table, get_sigma_star
+    from parC.fst_utils import ReservedSymbolMixin as R
+
+    syms = get_symbol_table()
+    sigma_star = get_sigma_star()
+    op_tag = get_op_tag(marker)
+    T_tag = pynini.accep(op_tag, token_type=syms)
+
+    if hasattr(marker, "kind") and marker.kind == "prefix":
+        bow = pynini.accep(R.bow, token_type=syms)
+        tau = pynini.cross(bow, pynini.concat(bow, fsa(marker.value)))
+        right_context = pynini.concat(sigma_star, pynini.concat(T_tag, sigma_star))
+        insert_prefix = pynini.cdrewrite(tau, "", right_context, sigma_star)
+        delete_tag = pynini.cdrewrite(
+            pynini.cross(T_tag, pynini.accep("", token_type=syms)),
+            "",
+            "",
+            sigma_star,
+        )
+        return pynini.compose(insert_prefix, delete_tag).optimize()
+
+    elif hasattr(marker, "kind") and marker.kind == "suffix":
+        eow = pynini.accep(R.eow, token_type=syms)
+        tau = pynini.cross(eow, pynini.concat(fsa(marker.value), eow))
+        right_context = pynini.concat(sigma_star, pynini.concat(T_tag, sigma_star))
+        insert_suffix = pynini.cdrewrite(tau, "", right_context, sigma_star)
+        delete_tag = pynini.cdrewrite(
+            pynini.cross(T_tag, pynini.accep("", token_type=syms)),
+            "",
+            "",
+            sigma_star,
+        )
+        return pynini.compose(insert_suffix, delete_tag).optimize()
+
+    else:
+        # fallback to gated-composition + tag deletion for rule markers and others
+        trigger_fsa = get_trigger_fsa([op_tag], syms, sigma_star)
+        marker_applied = pynini.compose(trigger_fsa, get_marker_fst(marker))
+        delete_tag = pynini.cdrewrite(
+            pynini.cross(T_tag, pynini.accep("", token_type=syms)),
+            "",
+            "",
+            sigma_star,
+        )
+        return pynini.compose(marker_applied, delete_tag).optimize()
+
+
 @observed_cache([get_yaml_dir()])
 def get_stage_realization_fst(paradigm_name: str, stage: str) -> pynini.Fst:
     """
@@ -941,7 +995,7 @@ def get_stage_realization_fst(paradigm_name: str, stage: str) -> pynini.Fst:
     with active markers at this stage to their phonetic realizations, while
     deleting the tags. Strings not containing any active tags pass through unchanged.
     """
-    from parC.grammar.transducer_compilation import get_marker_fst, get_trigger_fsa
+    from parC.grammar.transducer_compilation import get_trigger_fsa
     from parC.grammar.op_tags import get_op_tag
 
     syms = get_symbol_table()
@@ -1020,17 +1074,7 @@ def get_stage_realization_fst(paradigm_name: str, stage: str) -> pynini.Fst:
         op_tag = get_op_tag(marker)
         active_tags.append(op_tag)
 
-        trigger_fsa = get_trigger_fsa([op_tag], syms, sigma_star)
-        marker_applied = pynini.compose(trigger_fsa, get_marker_fst(marker))
-
-        op_tag_fsa = pynini.accep(op_tag, token_type=syms)
-        delete_op_tag = pynini.cdrewrite(
-            pynini.cross(op_tag_fsa, pynini.accep("", token_type=syms)),
-            "",
-            "",
-            sigma_star,
-        )
-        T_trigger = pynini.compose(marker_applied, delete_op_tag).optimize()
+        T_trigger = get_marker_swapping_transducer(marker)
         triggered_fsts.append(T_trigger)
 
     # 4. Identity map for non-flagged strings

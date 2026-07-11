@@ -26,13 +26,24 @@ def slugify(s: str) -> str:
 
 def get_op_tag(marker: Marker) -> str:
     """
-    Returns a clean, deterministic operational tag of the form [OP=...] for a given Marker.
+    Returns a clean, deterministic operational tag for a given Marker.
     """
     if isinstance(marker, SingleStringMarker):
-        val_part = slugify(marker.value)
-        if marker.stage:
-            return f"[OP={marker.kind}_{marker.stage}_{val_part}]"
-        return f"[OP={marker.kind}_{val_part}]"
+        if marker.kind == "prefix":
+            if marker.stage:
+                return f"<exp.prefix.{marker.stage}={marker.value}>"
+            return f"<exp.prefix={marker.value}>"
+        elif marker.kind == "suffix":
+            if marker.stage:
+                return f"<exp.suffix.{marker.stage}={marker.value}>"
+            return f"<exp.suffix={marker.value}>"
+        elif marker.kind == "rule":
+            return f"<exp.rule={marker.value}>"
+        else:
+            val_part = slugify(marker.value)
+            if marker.stage:
+                return f"[OP={marker.kind}_{marker.stage}_{val_part}]"
+            return f"[OP={marker.kind}_{val_part}]"
     elif isinstance(marker, StringTupleMarker):
         val_part = f"{slugify(marker.value[0])}_to_{slugify(marker.value[1])}"
         if marker.stage:
