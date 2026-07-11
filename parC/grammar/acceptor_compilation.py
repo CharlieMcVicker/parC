@@ -127,6 +127,9 @@ def _build_special_fsas(
     for feat in features:
         for val in feat.values:
             all_tags.append(f"[{feat.name}={val}]")
+    from parC.grammar.op_tags import get_all_op_tags
+    for op_tag in get_all_op_tags():
+        all_tags.append(op_tag)
     flag_fsa = (
         pynini.union(*[pynini.accep(t, token_type=syms)
                      for t in all_tags]).optimize()
@@ -226,6 +229,10 @@ def _build_token_map(
     for feat in features:
         for val in feat.values:
             tokens["tag"].append(Token(f"[{feat.name}={val}]", "tag"))
+
+    from parC.grammar.op_tags import get_all_op_tags
+    for op_tag in get_all_op_tags():
+        tokens["tag"].append(Token(op_tag, "tag"))
 
     # inventory classes — FSAs built separately in _build_class_fsts
     for name in inventory.item_map:

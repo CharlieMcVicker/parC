@@ -481,3 +481,34 @@ def test_get_label_to_marker_fst():
     result_strs = fsm_strings(result, strip_all_tags=False)
     assert len(result_strs) == 1
     assert "[OP=suffix_as]" in result_strs[0]
+
+
+def test_get_stage_realization_fst():
+    from parC.grammar.paradigm_compilation import get_stage_realization_fst
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings, get_symbol_table
+    import pynini
+
+    # 1. Compile the stage-by-stage realization transducer for verb_a_stem, stage None
+    stage_fst = get_stage_realization_fst("verb_a_stem", stage=None)
+    assert isinstance(stage_fst, pynini.Fst)
+
+    # 2. Let's test a mapping: habl[OP=suffix_as] should map to habl-as
+    syms = get_symbol_table()
+    input_fsa = word_fsa("habl")
+    input_fsa = pynini.concat(input_fsa, pynini.accep("[OP=suffix_as]", token_type=syms))
+
+    result = pynini.compose(input_fsa, stage_fst)
+    assert result.num_states() > 0
+    result_strs = fsm_strings(result, strip_all_tags=True)
+    # The operational tag should be deleted/rewritten, and suffix -as appended
+    assert "habl-as" in result_strs
+
+    # 3. Test non-flagged identity mapping: a string with no active stage tags should pass through unchanged
+    input_no_tag = word_fsa("habl")
+    result_no_tag = pynini.compose(input_no_tag, stage_fst)
+    assert result_no_tag.num_states() > 0
+    result_no_tag_strs = fsm_strings(result_no_tag, strip_all_tags=True)
+    assert "habl" in result_no_tag_strs
+
+
+
