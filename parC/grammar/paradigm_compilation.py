@@ -219,6 +219,7 @@ def build_inflect_graph_for_root_regex(
     from collections import defaultdict
     marker_to_combinations = defaultdict(list)
     input_parts = []
+    tag_seqs = []
 
     # We can pre-compile tag acceptors to avoid calling fsa(...) repeatedly.
     tag_fsas = {}
@@ -256,7 +257,13 @@ def build_inflect_graph_for_root_regex(
                 continue
 
             if infer_lexical_features:
-                combo_tags = [f"[{f}={v}]" for f, v in sorted(list(lexical_combo) + list(feature_values))]
+                lex_tags = []
+                for fname in lexical_feature_names:
+                    val = next((v for f, v in lexical_combo if f == fname), None)
+                    if val is not None:
+                        lex_tags.append(f"[{fname}={val}]")
+                inflect_tags = [f"[{f}={v}]" for f, v in sorted(list(feature_values))]
+                combo_tags = lex_tags + inflect_tags
             else:
                 combo_tags = [f"[{f}={v}]" for f, v in sorted(list(feature_values))]
             for marker, _ in markers:
@@ -280,11 +287,23 @@ def build_inflect_graph_for_root_regex(
             else:
                 lexical_fsa = None
 
+            inflectional_fsa = get_feature_fsa(feature_values)
+
+            # Gather tag sequences for the tag domain to perform static difference
+            if infer_lexical_features and lexical_fsa:
+                if inflectional_fsa is not None:
+                    tag_seq = pynini.concat(lexical_fsa, inflectional_fsa)
+                else:
+                    tag_seq = lexical_fsa
+            else:
+                tag_seq = inflectional_fsa
+            if tag_seq:
+                tag_seqs.append(tag_seq)
+
             inflect_input = root_fsa
             if infer_lexical_features and lexical_fsa:
                 inflect_input = pynini.concat(inflect_input, lexical_fsa)
 
-            inflectional_fsa = get_feature_fsa(feature_values)
             if inflectional_fsa is not None:
                 inflect_input = pynini.concat(inflect_input, inflectional_fsa)
             input_parts.append(inflect_input)
@@ -311,20 +330,46 @@ def build_inflect_graph_for_root_regex(
 
     sorted_markers = sorted(list(marker_to_combinations.keys()), key=get_marker_sort_key)
 
+    from parC.grammar.acceptor_compilation import get_special_fsas
+    special_fsas = get_special_fsas()
+    phone_fsa = special_fsas["phone"]
+    boundary_fsa = special_fsas["boundary"]
+    word_edge_fsa = special_fsas["word_edge"]
+    sigma_phones_and_boundaries = pynini.union(phone_fsa, boundary_fsa, word_edge_fsa).optimize()
+    stems_domain_acceptor = sigma_phones_and_boundaries.star.optimize()
+
+    # Build tag domain (all valid tag sequences)
+    tag_domain = pynini.union(*tag_seqs).optimize()
+
     # Apply sequential composition cascade
     current_fst = cascade_domain
     for marker in sorted_markers:
         combo_tag_lists = marker_to_combinations[marker]
         
-        # Build trigger FST: union of all triggering combinations
-        trigger_fsas = [get_trigger_fsa(tags, syms, sigma_star) for tags in combo_tag_lists]
-        trigger_fsa = pynini.union(*trigger_fsas).optimize()
-        non_trigger_fsa = pynini.difference(sigma_star, trigger_fsa).optimize()
+        # Build trigger FST by unioning tag suffixes
+        suffix_fsas = []
+        for tags in combo_tag_lists:
+            parts = [tag_fsas[t] for t in tags]
+            if parts:
+                seq = parts[0]
+                for part in parts[1:]:
+                    seq = pynini.concat(seq, part)
+                suffix_fsas.append(seq)
+        
+        if suffix_fsas:
+            trigger_tags = pynini.union(*suffix_fsas).optimize()
+            trigger_fsa = pynini.concat(sigma_star, trigger_tags).optimize()
+        else:
+            trigger_tags = pynini.accep("", token_type=syms)
+            trigger_fsa = sigma_star
         
         from parC.grammar.transducer_compilation import get_marker_fst
         base_fst = get_marker_fst(marker)
         
-        # Gated transducer
+        # Build non-triggering FST using the static tag difference
+        non_trigger_tags = pynini.difference(tag_domain, trigger_tags).optimize()
+        non_trigger_fsa = pynini.concat(stems_domain_acceptor, non_trigger_tags).optimize()
+        
         gated_fst = pynini.union(
             pynini.compose(trigger_fsa, base_fst),
             non_trigger_fsa

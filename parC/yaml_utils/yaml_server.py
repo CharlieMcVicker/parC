@@ -51,12 +51,11 @@ from parC.yaml_utils.models import (
 """
 
 
-def get_yaml_data_safe(kind: str, yaml_basename: str) -> dict:
-    """
-    Load a single YAML file and validate its contents against the expected schema.
-    Returns None if the config kind is invalid or the YAML data fails validation,
-    else returns the validated YAML data.
-    """
+import functools
+import copy
+
+@functools.lru_cache(maxsize=1024)
+def _get_yaml_data_safe_cached(kind: str, yaml_basename: str) -> dict:
     if kind not in CONFIG_KINDS:
         logger.error(f"Invalid config kind: {kind}")
         return None
@@ -72,6 +71,17 @@ def get_yaml_data_safe(kind: str, yaml_basename: str) -> dict:
         return None
 
     return yaml_data
+
+def get_yaml_data_safe(kind: str, yaml_basename: str) -> dict:
+    """
+    Load a single YAML file and validate its contents against the expected schema.
+    Returns None if the config kind is invalid or the YAML data fails validation,
+    else returns the validated YAML data.
+    """
+    data = _get_yaml_data_safe_cached(kind, yaml_basename)
+    if data is not None:
+        return copy.deepcopy(data)
+    return None
 
 
 def get_yaml_path(kind, yaml_basename):

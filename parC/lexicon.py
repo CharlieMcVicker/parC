@@ -8,20 +8,25 @@ import numpy as np
 from frozendict import frozendict
 
 
+_lexicon_df_cache = {}
+
 def load_lexicon_df(lexicon_basename: str) -> pd.DataFrame:
-    lexicon_dir = os.path.join(get_yaml_dir(), "Lexicon", "Wordlists")
-    lexicon_stem = os.path.splitext(lexicon_basename.removeprefix("$"))[0]
+    if lexicon_basename not in _lexicon_df_cache:
+        lexicon_dir = os.path.join(get_yaml_dir(), "Lexicon", "Wordlists")
+        lexicon_stem = os.path.splitext(lexicon_basename.removeprefix("$"))[0]
 
-    csv_path = os.path.join(lexicon_dir, lexicon_stem + ".csv")
-    xlsx_path = os.path.join(lexicon_dir, lexicon_stem + ".xlsx")
+        csv_path = os.path.join(lexicon_dir, lexicon_stem + ".csv")
+        xlsx_path = os.path.join(lexicon_dir, lexicon_stem + ".xlsx")
 
-    if os.path.exists(xlsx_path):
-        return pd.read_excel(xlsx_path, keep_default_na=False)
-    elif os.path.exists(csv_path):
-        return pd.read_csv(csv_path, keep_default_na=False)
-    else:
-        init_lexicon(lexicon_basename, csv_path)
-        return pd.read_csv(csv_path, keep_default_na=False)
+        if os.path.exists(xlsx_path):
+            df = pd.read_excel(xlsx_path, keep_default_na=False)
+        elif os.path.exists(csv_path):
+            df = pd.read_csv(csv_path, keep_default_na=False)
+        else:
+            init_lexicon(lexicon_basename, csv_path)
+            df = pd.read_csv(csv_path, keep_default_na=False)
+        _lexicon_df_cache[lexicon_basename] = df
+    return _lexicon_df_cache[lexicon_basename].copy()
 
 
 def init_lexicon(lexicon_basename: str, lexicon_path: str) -> None:
