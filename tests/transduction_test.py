@@ -219,6 +219,31 @@ def test_contingent_lexical_submapping():
         res_root2_2 = inflect(root2, {feature: val_key2}, "verb_class_test")
         assert f"{root2}{val2_2}" in res_root2_2
 
+        # Inverted open-root parser tests for verb_class_test
+        from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+        open_inflect_graph = build_inflect_graph_for_root_regex("verb_class_test", "<Phone>*", infer_lexical_features=True)
+        open_parse_graph = pynini.invert(open_inflect_graph).optimize()
+
+        # Parse f"{root1}{val1_1}" back to root1 with feature: val_key1
+        fsa_1 = word_fsa(f"{root1}{val1_1}")
+        parses_1 = fsm_strings(pynini.compose(fsa_1, open_parse_graph).optimize())
+        assert any(root1 in s and f"[{feature}={val_key1}]" in s for s in parses_1)
+
+        # Parse f"{root1}{val1_2}" back to root1 with feature: val_key2
+        fsa_2 = word_fsa(f"{root1}{val1_2}")
+        parses_2 = fsm_strings(pynini.compose(fsa_2, open_parse_graph).optimize())
+        assert any(root1 in s and f"[{feature}={val_key2}]" in s for s in parses_2)
+
+        # Parse f"{root2}{val2_1}" back to root2 with feature: val_key1
+        fsa_3 = word_fsa(f"{root2}{val2_1}")
+        parses_3 = fsm_strings(pynini.compose(fsa_3, open_parse_graph).optimize())
+        assert any(root2 in s and f"[{feature}={val_key1}]" in s for s in parses_3)
+
+        # Parse f"{root2}{val2_2}" back to root2 with feature: val_key2
+        fsa_4 = word_fsa(f"{root2}{val2_2}")
+        parses_4 = fsm_strings(pynini.compose(fsa_4, open_parse_graph).optimize())
+        assert any(root2 in s and f"[{feature}={val_key2}]" in s for s in parses_4)
+
     finally:
         if os.path.exists(contingent_path):
             os.remove(contingent_path)
@@ -554,6 +579,38 @@ def test_build_inflect_graph_for_root_regex_verb_a_stem():
     output_lattice = pynini.project(output_lattice, project_type="output")
     surface_forms = fsm_strings(output_lattice, strip_all_tags=True)
     assert "habl-as" in surface_forms
+
+
+def test_parse_with_inverted_open_root_graph():
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
+    import pynini
+
+    # Build the inflect graph with "<Phone>*" as the open-ended root pattern
+    inflect_graph = build_inflect_graph_for_root_regex("verb_a_stem", "<Phone>*")
+    assert isinstance(inflect_graph, pynini.Fst)
+
+    # Invert the graph to get the parse graph
+    parse_graph = pynini.invert(inflect_graph).optimize()
+
+    # Verify that "habl-as" parses back to "habl" with features [person_number=2sg][tense=present][mood=indicative]
+    form_fsa_habl = word_fsa("habl-as")
+    parse_lattice_habl = pynini.compose(form_fsa_habl, parse_graph).optimize()
+    parse_strs_habl = fsm_strings(parse_lattice_habl)
+    assert any(
+        "habl" in s and "[person_number=2sg]" in s and "[tense=present]" in s and "[mood=indicative]" in s
+        for s in parse_strs_habl
+    )
+
+    # Verify that "cant-as" parses back to "cant" with features [person_number=2sg][tense=present][mood=indicative]
+    form_fsa_cant = word_fsa("cant-as")
+    parse_lattice_cant = pynini.compose(form_fsa_cant, parse_graph).optimize()
+    parse_strs_cant = fsm_strings(parse_lattice_cant)
+    assert any(
+        "cant" in s and "[person_number=2sg]" in s and "[tense=present]" in s and "[mood=indicative]" in s
+        for s in parse_strs_cant
+    )
+
 
 
 
