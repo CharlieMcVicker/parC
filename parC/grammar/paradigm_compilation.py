@@ -311,74 +311,35 @@ def build_inflect_graph_for_root_regex(
 
     cascade_domain = pynini.union(*input_parts).optimize()
 
-    syms = get_symbol_table()
-    sigma_star = get_sigma_star()
+    # Apply three-phase composition cascade
+    # Phase 1: Compose cascade_domain with label to marker exponence FST
+    exponence_transducer = get_label_to_marker_fst(paradigm_name, infer_lexical_features, lexical_features)
+    current_fst = pynini.compose(cascade_domain, exponence_transducer).optimize()
 
-    # Sort markers by stage
+    # Phase 2: Compose with stage realization transducers sequentially
     stage_order = list(paradigm_data.get("stage_order", []))
     if "principal_part" not in stage_order:
         stage_order.insert(0, "principal_part")
 
-    def get_marker_sort_key(m):
-        stage = getattr(m, "stage", None)
-        if stage in stage_order:
-            return stage_order.index(stage)
-        return len(stage_order)
+    stages_present = {getattr(m, "stage", None) for m in marker_to_combinations.keys()}
+    execution_stages = []
+    for s in stage_order:
+        if s in stages_present:
+            execution_stages.append(s)
 
-    sorted_markers = sorted(list(marker_to_combinations.keys()), key=get_marker_sort_key)
+    other_stages = [s for s in stages_present if s not in stage_order]
+    other_stages = sorted(other_stages, key=lambda x: (x is None, str(x)))
+    execution_stages.extend(other_stages)
 
-    from parC.grammar.acceptor_compilation import get_special_fsas
-    special_fsas = get_special_fsas()
-    phone_fsa = special_fsas["phone"]
-    boundary_fsa = special_fsas["boundary"]
-    word_edge_fsa = special_fsas["word_edge"]
-    sigma_phones_and_boundaries = pynini.union(phone_fsa, boundary_fsa, word_edge_fsa).optimize()
-    stems_domain_acceptor = sigma_phones_and_boundaries.star.optimize()
+    for stage in execution_stages:
+        stage_realization = get_stage_realization_fst(paradigm_name, stage)
+        current_fst = pynini.compose(current_fst, stage_realization).optimize()
 
-    # Build tag domain (all valid tag sequences)
-    tag_domain = pynini.union(*tag_seqs).optimize()
+    # Phase 3: Compose with strict final surface filter
+    final_filter = get_final_surface_filter_fst(paradigm_name)
+    current_fst = pynini.compose(current_fst, final_filter).optimize()
 
-    # Apply sequential composition cascade
-    current_fst = cascade_domain
-    for marker in sorted_markers:
-        combo_tag_lists = marker_to_combinations[marker]
-        
-        # Build trigger FST by unioning tag suffixes
-        suffix_fsas = []
-        for tags in combo_tag_lists:
-            parts = [tag_fsas[t] for t in tags]
-            if parts:
-                seq = parts[0]
-                for part in parts[1:]:
-                    seq = pynini.concat(seq, part)
-                suffix_fsas.append(seq)
-        
-        if suffix_fsas:
-            trigger_tags = pynini.union(*suffix_fsas).optimize()
-            trigger_fsa = pynini.concat(sigma_star, trigger_tags).optimize()
-        else:
-            trigger_tags = pynini.accep("", token_type=syms)
-            trigger_fsa = sigma_star
-        
-        from parC.grammar.transducer_compilation import get_marker_fst
-        base_fst = get_marker_fst(marker)
-        
-        # Build non-triggering FST using the static tag difference
-        non_trigger_tags = pynini.difference(tag_domain, trigger_tags).optimize()
-        non_trigger_fsa = pynini.concat(stems_domain_acceptor, non_trigger_tags).optimize()
-        
-        gated_fst = pynini.union(
-            pynini.compose(trigger_fsa, base_fst),
-            non_trigger_fsa
-        ).optimize()
-        
-        current_fst = pynini.compose(current_fst, gated_fst).optimize()
-
-    # Cleanup Tags
-    delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) for t in tag_fsas])
-    cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
-    
-    return pynini.compose(current_fst, cleanup_fst).optimize()
+    return current_fst
 
 
 def build_parse_graph(inflect_graph: pynini.Fst) -> pynini.Fst:
@@ -720,7 +681,11 @@ def search(
     return hits
 
 
-def get_label_to_marker_fst(paradigm_name: str, infer_lexical_features: bool = False) -> pynini.Fst:
+def get_label_to_marker_fst(
+    paradigm_name: str,
+    infer_lexical_features: bool = False,
+    lexical_features: FeatureComboType | dict[str, str] | None = None,
+) -> pynini.Fst:
     """
     Constructs the exponence transducer. It maps the sequence of feature tags 
     (e.g., [prefix_class=a_stem][aspect=present]) to their corresponding sequence 
@@ -791,8 +756,17 @@ def get_label_to_marker_fst(paradigm_name: str, infer_lexical_features: bool = F
                 for combo_tuples in itertools.product(*lexical_value_lists)
             ]
     else:
-        lexical_combos = [set()]
-        lexical_feature_names = []
+        if lexical_features:
+            if isinstance(lexical_features, (dict, frozendict)):
+                lex_set = set(lexical_features.items())
+            else:
+                lex_set = set(lexical_features)
+            lexical_combos = [lex_set]
+            referenced_lexical_features = {f for f, _ in lex_set}
+            lexical_feature_names = sorted(list(referenced_lexical_features))
+        else:
+            lexical_combos = [set()]
+            lexical_feature_names = []
 
     mapping_list = []
     for lexical_combo in lexical_combos:

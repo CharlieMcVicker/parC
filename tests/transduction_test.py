@@ -535,6 +535,28 @@ def test_get_final_surface_filter_fst():
     assert pynini.compose(tagged_2, filter_fst).num_states() == 0
 
 
+def test_build_inflect_graph_for_root_regex_verb_a_stem():
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings, fsa
+    from parC.fst_utils import stringify_features
+    import pynini
+
+    # Build the inflect graph for verb_a_stem, root "habl"
+    inflect_graph = build_inflect_graph_for_root_regex("verb_a_stem", "habl")
+    assert isinstance(inflect_graph, pynini.Fst)
+
+    # Verify that a valid combination (2sg present indicative) inflects correctly to "habl-as"
+    feature_values = {"person_number": "2sg", "tense": "present", "mood": "indicative"}
+    feature_str = stringify_features(feature_values)
+    input_fsa = pynini.concat(word_fsa("habl"), fsa(feature_str))
+    
+    output_lattice = pynini.compose(input_fsa, inflect_graph).optimize()
+    output_lattice = pynini.project(output_lattice, project_type="output")
+    surface_forms = fsm_strings(output_lattice, strip_all_tags=True)
+    assert "habl-as" in surface_forms
+
+
+
 
 
 
