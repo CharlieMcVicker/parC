@@ -8,6 +8,8 @@ Caches:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pynini
 
 from parC.fst_utils import ReservedSymbolMixin as R
@@ -43,9 +45,9 @@ RULES_DIR = kind_dir("Rules")
 def _compile_simple_rule(rule: SimpleRule) -> pynini.Fst:
     sigma_star = get_sigma_star()
     tau = pynini.cross(fsa(rule.input_pattern), fsa(rule.output_pattern)).optimize()
-    l = fsa(rule.left_context) if rule.left_context else ""
-    r = fsa(rule.right_context) if rule.right_context else ""
-    return pynini.cdrewrite(tau, l, r, sigma_star)
+    left = fsa(rule.left_context) if rule.left_context else ""
+    right = fsa(rule.right_context) if rule.right_context else ""
+    return pynini.cdrewrite(tau, left, right, sigma_star)
 
 
 def _compile_string_map_rule(rule: StringMapRule) -> pynini.Fst:
@@ -53,9 +55,9 @@ def _compile_string_map_rule(rule: StringMapRule) -> pynini.Fst:
     tau = pynini.union(
         *[pynini.cross(fsa(i), fsa(o)) for i, o in rule.string_map]
     ).optimize()
-    l = fsa(rule.left_context) if rule.left_context else ""
-    r = fsa(rule.right_context) if rule.right_context else ""
-    return pynini.cdrewrite(tau, l, r, sigma_star)
+    left = fsa(rule.left_context) if rule.left_context else ""
+    right = fsa(rule.right_context) if rule.right_context else ""
+    return pynini.cdrewrite(tau, left, right, sigma_star)
 
 
 def compile_rule(rule: Rule) -> pynini.Fst | list[pynini.Fst]:
@@ -142,15 +144,13 @@ def compile_marker(marker: Marker) -> pynini.Fst:
     raise ValueError(f"Unknown marker: {marker!r}")
 
 
-from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
 
 """
 Public API
 """
 
 
-import hashlib
-import json
+
 
 def get_rule_fst_key(rule_name: str) -> str:
     rule_name = rule_name.removeprefix("$")

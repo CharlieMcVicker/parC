@@ -1,23 +1,11 @@
 from parC.yaml_utils.models import (
-    Marker,
-    Rule,
-    SimpleRule,
-    StringMapRule,
-    RuleSequence,
     SingleStringMarker,
-    StringTupleMarker,
-    UnorderedMarker,
-    PrincipalPartMarker,
-    OperationTypeStringTuple,
-    OperationTypeSingleString,
-    UnorderedOperation,
 )
 from parC.grammar.transducer_compilation import compile_marker
 from parC.grammar.acceptor_compilation import (
     fsa,
     word_fsa,
     fsm_strings,
-    filter_strings_by_pattern,
 )
 from parC.grammar.marker_resolution import get_markers_for_paradigm
 from parC.lexicon import get_roots_with_gloss
@@ -26,7 +14,6 @@ import pynini
 from parC.yaml_utils.yaml_server import get_yaml_data_safe
 from parC.grammar.paradigm_compilation import inflect, parse, search, _get_or_build
 
-from parC.constants import PROJECT_ROOT
 import os
 import pytest
 
@@ -240,8 +227,8 @@ def test_contingent_lexical_submapping():
 
 
 def test_build_inflect_graph_for_root_regex():
-    from parC.grammar.transducer_compilation import build_inflect_graph_for_root_regex
-    from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
     from parC.fst_utils import stringify_features
     import pynini
 
@@ -270,8 +257,8 @@ def test_build_inflect_graph_for_root_regex():
 def test_build_inflect_graph_for_root_regex_with_lexical_features():
     from parC.constants import get_yaml_dir
     from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
-    from parC.grammar.transducer_compilation import build_inflect_graph_for_root_regex
-    from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
     from parC.fst_utils import stringify_features
     import yaml
     import pynini
@@ -373,9 +360,8 @@ def test_build_inflect_graph_for_root_regex_with_lexical_features():
 def test_build_inflect_graph_for_root_regex_lexical_inference():
     from parC.constants import get_yaml_dir
     from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
-    from parC.grammar.transducer_compilation import build_inflect_graph_for_root_regex
-    from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
-    from parC.fst_utils import stringify_features
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
     import yaml
     import pynini
 

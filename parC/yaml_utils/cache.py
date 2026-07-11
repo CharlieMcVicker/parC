@@ -303,7 +303,7 @@ def get_hashable_args_and_kwargs(args, kwargs):
         try:
             hash(hashable_arg)
         except Exception as e:
-            raise ValueError(f"Could not hash kwarg {value} with key {key}: {e}")
+            raise ValueError(f"Could not hash arg {arg}: {e}")
 
         hashable_args.append(hashable_arg)
 

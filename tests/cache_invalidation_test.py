@@ -1,18 +1,3 @@
-from parC.yaml_utils.models import (
-    Marker,
-    Rule,
-    SimpleRule,
-    StringMapRule,
-    RuleSequence,
-    SingleStringMarker,
-    StringTupleMarker,
-    UnorderedMarker,
-    PrincipalPartMarker,
-    OperationTypeStringTuple,
-    OperationTypeSingleString,
-    UnorderedOperation,
-)
-from parC.grammar.transducer_compilation import compile_marker
 from parC.grammar.acceptor_compilation import (
     fsa,
     word_fsa,
@@ -20,17 +5,10 @@ from parC.grammar.acceptor_compilation import (
     filter_strings_by_pattern,
     get_pattern_fsts,
 )
-from parC.grammar.marker_resolution import get_markers_for_paradigm
-from parC.lexicon import get_roots_with_gloss
-import pynini
 import yaml
-from copy import deepcopy
 import pytest
 from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_yaml_path
-from parC.grammar.paradigm_compilation import inflect, parse, search, _get_or_build
 from parC.grammar.transducer_compilation import get_rule_fst
-from parC.constants import PROJECT_ROOT
-import os
 
 
 @pytest.fixture

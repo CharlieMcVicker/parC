@@ -4,7 +4,7 @@ At present supports a unigram edit model using a transition matrix.
 TODO: support n-gram edit models for wider context using `nltk.lm`.
 """
 
-from scipy.stats import entropy, dirichlet
+from scipy.stats import entropy
 import numpy as np
 
 """

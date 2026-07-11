@@ -104,7 +104,7 @@ class WfsaCsrBeam:
     labels: tuple[int, ...]
 
     def __str__(self) -> str:
-        labels = [ascii_table.find(l) for l in self.labels]
+        labels = [ascii_table.find(lbl) for lbl in self.labels]
         label_str = "".join(labels) or "<eps>"
         final = " final" if self.final else ""
         state_name = f"({self.left_state},{self.right_state})"

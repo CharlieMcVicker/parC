@@ -18,15 +18,13 @@ from pynini.lib import pynutil
 from typing import NamedTuple
 from frozendict import frozendict
 
-from parC.yaml_utils.cache import is_fst_cache_valid, save_fst, load_fst, observed_cache, compute_cache_key, get_cached_fst, save_cached_fst
+from parC.yaml_utils.cache import observed_cache, compute_cache_key
 from parC.fst_utils import ReservedSymbolMixin as R
 from parC.fst_utils import stringify_features
 from parC.constants import get_yaml_dir
 from parC.lexicon import get_gloss_for_root, get_roots, get_roots_with_lexical_features
-from parC.yaml_utils.schema_validation import CONFIG_KIND_TO_PARDIR
 from parC.yaml_utils.yaml_server import (
     get_feature_map,
-    get_yaml_kind,
     get_yaml_data_safe,
     kind_dir,
 )
@@ -123,7 +121,7 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
                 inflected_output = pynini.project(
                     _apply_markers(root_fsa, markers), project_type="output"
                 )
-            except Exception as e:
+            except Exception:
                 # logger.debug(
                 #     f"Skipping {paradigm_name} root={root} fv={feature_values}: {e}"
                 # )
@@ -250,7 +248,7 @@ def build_inflect_graph_for_root_regex(
                     lexical_features=lexical_combo,
                     include_features=True,
                 )
-            except Exception as e:
+            except Exception:
                 # logger.debug(
                 #     f"Skipping {paradigm_name} root_regex={root_regex} fv={feature_values} lex={lexical_combo}: {e}"
                 # )
@@ -313,7 +311,6 @@ def build_inflect_graph_for_root_regex(
 
     cascade_domain = pynini.union(*input_parts).optimize()
 
-    from parC.grammar.transducer_compilation import get_gated_marker_fst, get_trigger_fsa
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
 

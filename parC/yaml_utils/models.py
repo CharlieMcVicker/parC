@@ -1,4 +1,4 @@
-from typing import Any, Literal, NamedTuple
+from typing import Literal, NamedTuple
 
 class InventoryItemContents(NamedTuple):
     """

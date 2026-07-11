@@ -17,6 +17,8 @@ and for loading specific objects from YAML files, viz:
 """
 
 import os
+import functools
+import copy
 
 from loguru import logger
 import yaml
@@ -37,13 +39,7 @@ from parC.yaml_utils.models import (
     Pattern,
     Rule,
     resolve_rule,
-    SimpleRule,
-    StringMapRule,
-    RuleSequence,
     Feature,
-    FeatureValue,
-    UnorderedMarker,
-    PrincipalPartMarker,
 )
 
 """
@@ -51,8 +47,7 @@ from parC.yaml_utils.models import (
 """
 
 
-import functools
-import copy
+
 
 @functools.lru_cache(maxsize=1024)
 def _get_yaml_data_safe_cached(kind: str, yaml_basename: str, file_hash: str) -> dict:

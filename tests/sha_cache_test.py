@@ -1,12 +1,9 @@
 import os
 import tempfile
 import json
-import pytest
-from parC.constants import get_yaml_dir
 from parC.yaml_utils.cache import (
     get_file_sha256,
     get_dir_sha256,
-    compute_cache_key,
     CACHE_DIR,
 )
 from parC.grammar.transducer_compilation import get_rule_fst_key

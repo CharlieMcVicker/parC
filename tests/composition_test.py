@@ -1,9 +1,6 @@
 import os
-import pytest
 import pynini
-from parC.constants import get_yaml_dir
-from parC.fst_utils import ReservedSymbolMixin as R
-from parC.grammar.acceptor_compilation import fsa, word_fsa, get_sigma_star, get_symbol_table, fsm_strings
+from parC.grammar.acceptor_compilation import fsa, fsm_strings
 from parC.yaml_utils.models import SingleStringMarker
 from parC.grammar.transducer_compilation import compile_marker, compile_gated_marker, get_gated_marker_fst
 
@@ -57,7 +54,7 @@ def test_gated_suffix_trigger_mismatched():
     # Should not have changed the stem to "cant-as"
     assert not any("cant-as" in s for s in out)
     # Stem should remain "cant"
-    assert any("cant" in s and not "cant-as" in s for s in out)
+    assert any("cant" in s and "cant-as" not in s for s in out)
     # Tags should be preserved
     assert any("[person_number=1sg]" in s for s in out)
 

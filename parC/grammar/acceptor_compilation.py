@@ -14,7 +14,6 @@ Caches:
 
 from __future__ import annotations
 
-import os
 import re
 import unicodedata
 from collections import defaultdict
@@ -22,13 +21,9 @@ from graphlib import TopologicalSorter
 from typing import Literal
 
 import pynini
-from loguru import logger
 from pynini.lib import rewrite
 
 from parC.yaml_utils.cache import (
-    is_syms_cache_valid,
-    save_symbol_table,
-    load_symbol_table,
     observed_cache,
     compute_cache_key,
     get_cached_symbol_table,

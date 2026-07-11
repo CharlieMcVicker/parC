@@ -39,6 +39,7 @@ include = ["parC*"]
 [tool.setuptools.package-data]
 "*" = ["*.csv", "*.yaml", "*.yml", "*.json", "*.txt", "*.xlsx"]
 
-[pytest]
-env_override_existing_values = 1
-env_files = [".test.env"]
+[tool.pytest.ini_options]
+env = [
+    "YAML_DIR=yaml/spanish-example"
+]

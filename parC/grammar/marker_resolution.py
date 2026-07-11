@@ -16,7 +16,6 @@ from parC.lexicon import (
 )
 from parC.yaml_utils.models import (
     Marker,
-    UnorderedMarker,
     PrincipalPartMarker,
     resolve_marker,
 )

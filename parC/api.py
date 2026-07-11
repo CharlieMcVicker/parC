@@ -25,7 +25,6 @@ from parC.grammar.acceptor_compilation import (
 from parC.grammar.paradigm_compilation import (
     inflect_stages,
     parse,
-    inflect,
     search,
     get_roots_for_paradigm,
 )
@@ -44,7 +43,6 @@ from parC.lexicon import (
     get_roots,
     get_features_for_root,
 )
-from parC.constants import get_yaml_dir
 
 app = FastAPI()
 
