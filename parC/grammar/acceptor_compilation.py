@@ -64,11 +64,22 @@ def build_symbol_table(
         syms.add_symbol(sym)
     for sym in R.bow_eow_tags:
         syms.add_symbol(sym)
+
+    from parC.grammar.op_tags import get_all_op_tags
+    for op_tag in sorted(get_all_op_tags()):
+        syms.add_symbol(op_tag)
+
     return syms
 
 
 def get_symbol_table_key() -> str:
-    config_dirs = [kind_dir("Inventory"), kind_dir("FeatureDefinitions")]
+    config_dirs = [
+        kind_dir("Inventory"),
+        kind_dir("FeatureDefinitions"),
+        kind_dir("Paradigm"),
+        kind_dir("FeatureMarkers"),
+        kind_dir("ContingentFeatureMarkers"),
+    ]
     return compute_cache_key("symbol_table", "SymbolTable", config_dirs)
 
 
@@ -77,6 +88,9 @@ def get_symbol_table_key() -> str:
         kind_dir("Patterns"),
         kind_dir("Inventory"),
         kind_dir("FeatureDefinitions"),
+        kind_dir("Paradigm"),
+        kind_dir("FeatureMarkers"),
+        kind_dir("ContingentFeatureMarkers"),
     ]
 )
 def get_symbol_table() -> pynini.SymbolTable:

@@ -718,3 +718,137 @@ def search(
         return parses
 
     return hits
+
+
+def get_label_to_marker_fst(paradigm_name: str, infer_lexical_features: bool = False) -> pynini.Fst:
+    """
+    Constructs the exponence transducer. It maps the sequence of feature tags 
+    (e.g., [prefix_class=a_stem][aspect=present]) to their corresponding sequence 
+    of operational tags for every valid combination of features, while acting 
+    as the identity on the stem segments and boundaries.
+    """
+    from parC.yaml_utils.models import Inventory
+    from parC.yaml_utils.yaml_server import get_inventory_items
+    from parC.grammar.op_tags import get_op_tag
+
+    # 1. Build identity map for non-feature alphabet
+    syms = get_symbol_table()
+    inventory = get_inventory_items()
+    phones = list(dict.fromkeys(inventory.phones))
+    
+    non_feature_symbols = (
+        phones
+        + list(dict.fromkeys(inventory.tags))  # any non-feature tags from inventory
+        + list(R.boundary_symbols)
+        + list(R.edit_tags)
+        + list(R.bow_eow_tags)
+    )
+    non_feature_fsa = pynini.union(
+        *[pynini.accep(sym, token_type=syms) for sym in non_feature_symbols if sym]
+    ).optimize()
+    non_feature_identity = non_feature_fsa
+
+    # 2. Collect feature combinations
+    feature_map = get_feature_map()
+    combos, _, _ = get_feature_combos_for_paradigm(
+        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
+    )
+
+    if infer_lexical_features:
+        paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+        part_of_speech = paradigm_data["part_of_speech"]
+        part_of_speech_data = get_yaml_data_safe(
+            yaml_basename=part_of_speech, kind="PartOfSpeech"
+        )
+        lexical_feature_names = part_of_speech_data.get("lexical_features", [])
+
+        # Prune lexical features to only those referenced in this paradigm's rules/markers
+        referenced_lexical_features = set()
+        contingent_files = paradigm_data.get("contingent_markers", [])
+        for contingent_file in contingent_files:
+            contingent_data = get_yaml_data_safe("ContingentFeatureMarkers", contingent_file)
+            if contingent_data:
+                for f in contingent_data.get("features", []):
+                    if f in lexical_feature_names:
+                        referenced_lexical_features.add(f)
+        for f in paradigm_data.get("feature_markers", {}).keys():
+            if f in lexical_feature_names:
+                referenced_lexical_features.add(f)
+
+        lexical_value_lists = []
+        for fname in lexical_feature_names:
+            if fname not in feature_map:
+                continue
+            if fname in referenced_lexical_features:
+                lexical_value_lists.append([(fname, v) for v in feature_map[fname]])
+
+        if not lexical_value_lists:
+            lexical_combos = [set()]
+        else:
+            import itertools
+            lexical_combos = [
+                set(combo_tuples)
+                for combo_tuples in itertools.product(*lexical_value_lists)
+            ]
+    else:
+        lexical_combos = [set()]
+        lexical_feature_names = []
+
+    mapping_list = []
+    for lexical_combo in lexical_combos:
+        for feature_values in combos:
+            try:
+                markers = get_markers_for_paradigm(
+                    feature_values,
+                    paradigm_name,
+                    root=None,
+                    lexical_features=lexical_combo,
+                    include_features=True,
+                )
+            except Exception:
+                continue
+
+            # Build the sequence of feature tags as an acceptor (the input side)
+            input_tag_strs = []
+            if infer_lexical_features:
+                for fname in lexical_feature_names:
+                    val = next((v for f, v in lexical_combo if f == fname), None)
+                    if val is not None:
+                        input_tag_strs.append(f"[{fname}={val}]")
+            
+            # Sort inflectional features alphabetically
+            sorted_inflect = sorted(list(feature_values))
+            for f, v in sorted_inflect:
+                input_tag_strs.append(f"[{f}={v}]")
+
+            if not input_tag_strs:
+                input_fsa = pynini.accep("", token_type=syms)
+            else:
+                input_fsa = pynini.accep(input_tag_strs[0], token_type=syms)
+                for tag_str in input_tag_strs[1:]:
+                    input_fsa = pynini.concat(input_fsa, pynini.accep(tag_str, token_type=syms))
+
+            # Build the sequence of operational tags as an acceptor (the output side)
+            op_tags_seq = []
+            for marker, _ in markers:
+                op_tags_seq.append(get_op_tag(marker))
+
+            if not op_tags_seq:
+                output_fsa = pynini.accep("", token_type=syms)
+            else:
+                output_fsa = pynini.accep(op_tags_seq[0], token_type=syms)
+                for op_tag in op_tags_seq[1:]:
+                    output_fsa = pynini.concat(output_fsa, pynini.accep(op_tag, token_type=syms))
+
+            cross_trans = pynini.cross(input_fsa, output_fsa)
+            mapping_list.append(cross_trans)
+
+    if not mapping_list:
+        return non_feature_identity.star.optimize()
+
+    mapping_union = pynini.union(*mapping_list).optimize()
+    exponence_transducer = pynini.union(non_feature_identity, mapping_union).star.optimize()
+    return exponence_transducer
+
+
+get_exponence_transducer = get_label_to_marker_fst

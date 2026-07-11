@@ -457,3 +457,27 @@ def test_build_inflect_graph_for_root_regex_lexical_inference():
             os.remove(contingent_path)
         if os.path.exists(paradigm_path):
             os.remove(paradigm_path)
+
+
+def test_get_label_to_marker_fst():
+    from parC.grammar.paradigm_compilation import get_label_to_marker_fst
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings, get_symbol_table
+    import pynini
+
+    # 1. Compile the label-to-marker fst (exponence transducer) for verb_a_stem
+    exponence_fst = get_label_to_marker_fst("verb_a_stem", infer_lexical_features=False)
+    assert isinstance(exponence_fst, pynini.Fst)
+
+    # 2. Let's test a mapping: habl[person_number=2sg][tense=present][mood=indicative]
+    # should map to habl followed by its operational tag
+    syms = get_symbol_table()
+    input_fsa = word_fsa("habl")
+    input_fsa = pynini.concat(input_fsa, pynini.accep("[mood=indicative]", token_type=syms))
+    input_fsa = pynini.concat(input_fsa, pynini.accep("[person_number=2sg]", token_type=syms))
+    input_fsa = pynini.concat(input_fsa, pynini.accep("[tense=present]", token_type=syms))
+
+    result = pynini.compose(input_fsa, exponence_fst)
+    assert result.num_states() > 0
+    result_strs = fsm_strings(result, strip_all_tags=False)
+    assert len(result_strs) == 1
+    assert "[OP=suffix_as]" in result_strs[0]
