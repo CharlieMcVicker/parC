@@ -250,3 +250,78 @@ def get_marker_fst(marker: Marker) -> pynini.Fst:
     compiled = compile_marker(marker)
     save_cached_fst(cache_key, compiled)
     return compiled
+
+
+def get_trigger_fsa(trigger_tags: list[str] | tuple[str, ...], syms, sigma_star) -> pynini.Fst:
+    """Helper to build a trigger acceptor that matches strings containing all trigger tags in order."""
+    if not trigger_tags:
+        return sigma_star
+    sorted_tags = sorted(list(trigger_tags))
+    parts = []
+    for tag in sorted_tags:
+        parts.append(pynini.accep(tag, token_type=syms))
+    
+    seq = parts[0]
+    for part in parts[1:]:
+        seq = pynini.concat(seq, part)
+        
+    return pynini.concat(sigma_star, pynini.concat(seq, sigma_star)).optimize()
+
+
+def compile_gated_marker(marker: Marker, trigger_tags: list[str] | tuple[str, ...]) -> pynini.Fst:
+    """Compiles a marker that only applies if the input string contains all trigger_tags."""
+    syms = get_symbol_table()
+    sigma_star = get_sigma_star()
+    
+    base_fst = get_marker_fst(marker)
+    
+    if not trigger_tags:
+        return base_fst
+        
+    trigger_fsa = get_trigger_fsa(trigger_tags, syms, sigma_star)
+    non_trigger_fsa = pynini.difference(sigma_star, trigger_fsa).optimize()
+    
+    gated_fst = pynini.union(
+        pynini.compose(trigger_fsa, base_fst),
+        non_trigger_fsa
+    ).optimize()
+    
+    return gated_fst
+
+
+def get_gated_marker_fst_key(marker: Marker, trigger_tags: tuple[str, ...]) -> str:
+    marker_key = get_marker_fst_key(marker)
+    tags_str = ",".join(sorted(trigger_tags))
+    tags_hash = hashlib.sha256(tags_str.encode("utf-8")).hexdigest()
+    
+    config_dirs = [
+        kind_dir("Rules"),
+        kind_dir("Patterns"),
+        kind_dir("Inventory"),
+        kind_dir("FeatureDefinitions"),
+        kind_dir("FeatureMarkers"),
+        kind_dir("ContingentFeatureMarkers"),
+    ]
+    child_keys = {"marker": marker_key}
+    return compute_cache_key(f"gated_marker_{tags_hash}", "GatedMarker", config_dirs, child_keys)
+
+
+@observed_cache(
+    [
+        kind_dir("Rules"),
+        kind_dir("Patterns"),
+        kind_dir("Inventory"),
+        kind_dir("FeatureDefinitions"),
+        kind_dir("FeatureMarkers"),
+        kind_dir("ContingentFeatureMarkers"),
+    ]
+)
+def get_gated_marker_fst(marker: Marker, trigger_tags: tuple[str, ...]) -> pynini.Fst:
+    cache_key = get_gated_marker_fst_key(marker, trigger_tags)
+    cached = get_cached_fst(cache_key)
+    if cached is not None:
+        return cached
+    compiled = compile_gated_marker(marker, trigger_tags)
+    save_cached_fst(cache_key, compiled)
+    return compiled
+
