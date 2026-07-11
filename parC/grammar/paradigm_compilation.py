@@ -140,6 +140,126 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
     return pynini.union(*inflect_fsts).optimize()
 
 
+@observed_cache([get_yaml_dir()])
+def compile_paradigm_grammar(
+    paradigm_name: str,
+    infer_lexical_features: bool = False,
+    lexical_features: tuple[tuple[str, str], ...] | None = None,
+) -> pynini.Fst:
+    """
+    Compile a root-independent paradigm transducer (T_paradigm) exactly once.
+    Covers Phase 1, Phase 2, and Phase 3 of the paradigm FST compilation pipeline.
+    """
+    from parC.grammar.op_tags import get_op_tag
+
+    # Phase 1: Label-to-Marker Transducer
+    current_fst = get_label_to_marker_fst(
+        paradigm_name,
+        infer_lexical_features=infer_lexical_features,
+        lexical_features=lexical_features,
+    )
+
+    # Discover and order all stages present on the paradigm's markers
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if paradigm_data is None:
+        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
+
+    feature_map = get_feature_map()
+    combos, _, _ = get_feature_combos_for_paradigm(
+        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
+    )
+
+    part_of_speech = paradigm_data["part_of_speech"]
+    part_of_speech_data = get_yaml_data_safe(
+        yaml_basename=part_of_speech, kind="PartOfSpeech"
+    )
+    lexical_feature_names = part_of_speech_data.get("lexical_features", [])
+
+    referenced_lexical_features = set()
+    contingent_files = paradigm_data.get("contingent_markers", [])
+    for contingent_file in contingent_files:
+        contingent_data = get_yaml_data_safe("ContingentFeatureMarkers", contingent_file)
+        if contingent_data:
+            for f in contingent_data.get("features", []):
+                if f in lexical_feature_names:
+                    referenced_lexical_features.add(f)
+    for f in paradigm_data.get("feature_markers", {}).keys():
+        if f in lexical_feature_names:
+            referenced_lexical_features.add(f)
+
+    if infer_lexical_features:
+        lexical_value_lists = []
+        for fname in lexical_feature_names:
+            if fname not in feature_map:
+                continue
+            if fname in referenced_lexical_features:
+                lexical_value_lists.append([(fname, v) for v in feature_map[fname]])
+
+        if not lexical_value_lists:
+            lexical_combos = [set()]
+        else:
+            import itertools
+            lexical_combos = [
+                set(combo_tuples)
+                for combo_tuples in itertools.product(*lexical_value_lists)
+            ]
+    else:
+        if lexical_features:
+            lex_set = set(lexical_features)
+            lexical_combos = [lex_set]
+            referenced_lexical_features = {f for f, _ in lex_set}
+            lexical_feature_names = sorted(list(referenced_lexical_features))
+        else:
+            lexical_combos = [set()]
+            lexical_feature_names = []
+
+    unique_markers = []
+    seen_marker_keys = set()
+    for lexical_combo in lexical_combos:
+        for feature_values in combos:
+            try:
+                markers = get_markers_for_paradigm(
+                    feature_values,
+                    paradigm_name,
+                    root=None,
+                    lexical_features=lexical_combo,
+                    include_features=False,
+                )
+            except Exception:
+                continue
+            for marker in markers:
+                op_tag = get_op_tag(marker)
+                if op_tag not in seen_marker_keys:
+                    seen_marker_keys.add(op_tag)
+                    unique_markers.append(marker)
+
+    # Order stages
+    stage_order = list(paradigm_data.get("stage_order", []))
+    if "principal_part" not in stage_order:
+        stage_order.insert(0, "principal_part")
+
+    stages_present = {getattr(m, "stage", None) for m in unique_markers}
+    execution_stages = []
+    for s in stage_order:
+        if s in stages_present:
+            execution_stages.append(s)
+
+    other_stages = [s for s in stages_present if s not in stage_order]
+    other_stages = sorted(other_stages, key=lambda x: (x is None, str(x)))
+    execution_stages.extend(other_stages)
+
+    # Sequentially compose Phase 1 FST with Phase 2's stage realization transducers
+    for stage in execution_stages:
+        stage_realization = get_stage_realization_fst(paradigm_name, stage)
+        current_fst = pynini.compose(current_fst, stage_realization).optimize()
+
+    # Compose with Phase 3's final surface filter
+    final_filter = get_final_surface_filter_fst(paradigm_name)
+    current_fst = pynini.compose(current_fst, final_filter).optimize()
+
+    return current_fst
+
+
 def build_inflect_graph_for_root_regex(
     paradigm_name: str,
     root_regex: str | pynini.Fst,
@@ -311,35 +431,20 @@ def build_inflect_graph_for_root_regex(
 
     cascade_domain = pynini.union(*input_parts).optimize()
 
-    # Apply three-phase composition cascade
-    # Phase 1: Compose cascade_domain with label to marker exponence FST
-    exponence_transducer = get_label_to_marker_fst(paradigm_name, infer_lexical_features, lexical_features)
-    current_fst = pynini.compose(cascade_domain, exponence_transducer).optimize()
+    # Retrieve pre-compiled universal grammar FST and compose directly with cascade_domain
+    lexical_features_hashable = None
+    if lexical_features:
+        if isinstance(lexical_features, (dict, frozendict)):
+            lexical_features_hashable = tuple(sorted(lexical_features.items()))
+        else:
+            lexical_features_hashable = tuple(sorted(list(lexical_features)))
 
-    # Phase 2: Compose with stage realization transducers sequentially
-    stage_order = list(paradigm_data.get("stage_order", []))
-    if "principal_part" not in stage_order:
-        stage_order.insert(0, "principal_part")
-
-    stages_present = {getattr(m, "stage", None) for m in marker_to_combinations.keys()}
-    execution_stages = []
-    for s in stage_order:
-        if s in stages_present:
-            execution_stages.append(s)
-
-    other_stages = [s for s in stages_present if s not in stage_order]
-    other_stages = sorted(other_stages, key=lambda x: (x is None, str(x)))
-    execution_stages.extend(other_stages)
-
-    for stage in execution_stages:
-        stage_realization = get_stage_realization_fst(paradigm_name, stage)
-        current_fst = pynini.compose(current_fst, stage_realization).optimize()
-
-    # Phase 3: Compose with strict final surface filter
-    final_filter = get_final_surface_filter_fst(paradigm_name)
-    current_fst = pynini.compose(current_fst, final_filter).optimize()
-
-    return current_fst
+    grammar_fst = compile_paradigm_grammar(
+        paradigm_name,
+        infer_lexical_features=infer_lexical_features,
+        lexical_features=lexical_features_hashable,
+    )
+    return pynini.compose(cascade_domain, grammar_fst).optimize()
 
 
 def build_parse_graph(inflect_graph: pynini.Fst) -> pynini.Fst:
