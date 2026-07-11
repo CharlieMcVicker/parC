@@ -168,7 +168,8 @@ def get_rule_fst_key(rule_name: str) -> str:
             child_keys[f"Rule/{sub_rule_name}"] = get_rule_fst_key(sub_rule_name)
     from parC.grammar.acceptor_compilation import get_symbol_table_key
     child_keys["symbol_table"] = get_symbol_table_key()
-    return compute_cache_key(rule_name, "Rule", config_dirs, child_keys)
+    description = f"Rule '{rule_name}' ({rule})" if rule else f"Rule '{rule_name}'"
+    return compute_cache_key(rule_name, "Rule", config_dirs, child_keys, description=description)
 
 
 def get_marker_fst_key(marker: Marker) -> str:
@@ -191,7 +192,8 @@ def get_marker_fst_key(marker: Marker) -> str:
     marker_json = json.dumps(marker_dict, sort_keys=True)
     marker_hash = hashlib.sha256(marker_json.encode("utf-8")).hexdigest()
     
-    return compute_cache_key(f"marker_{marker_hash}", "Marker", config_dirs, child_keys)
+    description = f"Marker {marker}"
+    return compute_cache_key(f"marker_{marker_hash}", "Marker", config_dirs, child_keys, description=description)
 
 
 @observed_cache(
@@ -303,7 +305,8 @@ def get_gated_marker_fst_key(marker: Marker, trigger_tags: tuple[str, ...]) -> s
         kind_dir("ContingentFeatureMarkers"),
     ]
     child_keys = {"marker": marker_key}
-    return compute_cache_key(f"gated_marker_{tags_hash}", "GatedMarker", config_dirs, child_keys)
+    description = f"GatedMarker {marker} (gated by tags: {trigger_tags})"
+    return compute_cache_key(f"gated_marker_{tags_hash}", "GatedMarker", config_dirs, child_keys, description=description)
 
 
 @observed_cache(

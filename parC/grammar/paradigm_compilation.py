@@ -434,21 +434,24 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
     except Exception as e:
         logger.warning(f"Error resolving marker dependencies for paradigm {paradigm_name}: {e}")
         
-    return compute_cache_key(paradigm_name, "Paradigm", config_dirs, child_keys)
+    description = f"Paradigm '{paradigm_name}' ({len(seen_markers)} markers resolved)"
+    return compute_cache_key(paradigm_name, "Paradigm", config_dirs, child_keys, description=description)
 
 
 def _load_paradigm_cached(cache_key: str) -> tuple[pynini.Fst, pynini.Fst, pynini.Fst, pynini.Fst] | None:
-    from parC.yaml_utils.cache import CACHE_DIR
+    from parC.yaml_utils.cache import CACHE_DIR, record_cache_miss
     fsts = []
     for k in _FST_KINDS:
         path = os.path.join(CACHE_DIR, f"{cache_key}_{k}.fst")
         if not os.path.exists(path):
             logger.debug(f"Paradigm cache MISS for key {cache_key}: missing {k}.fst")
+            record_cache_miss(cache_key)
             return None
         try:
             fsts.append(pynini.Fst.read(path))
         except Exception as e:
             logger.debug(f"Paradigm cache MISS for key {cache_key}: failed to read {k}.fst: {e}")
+            record_cache_miss(cache_key)
             return None
     logger.debug(f"Paradigm cache HIT for key {cache_key}")
     return tuple(fsts)
@@ -461,11 +464,12 @@ def _save_paradigm_cached(
     search_lexicon: pynini.Fst,
     search_left_factor: pynini.Fst,
 ) -> None:
-    from parC.yaml_utils.cache import CACHE_DIR
+    from parC.yaml_utils.cache import CACHE_DIR, record_cache_save
     inflect.write(os.path.join(CACHE_DIR, f"{cache_key}_inflect.fst"))
     parse.write(os.path.join(CACHE_DIR, f"{cache_key}_parse.fst"))
     search_lexicon.write(os.path.join(CACHE_DIR, f"{cache_key}_search_lexicon.fst"))
     search_left_factor.write(os.path.join(CACHE_DIR, f"{cache_key}_search_left_factor.fst"))
+    record_cache_save(cache_key)
 
 
 @observed_cache([get_yaml_dir()])
