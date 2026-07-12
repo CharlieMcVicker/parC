@@ -140,6 +140,63 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
     return pynini.union(*inflect_fsts).optimize()
 
 
+def _get_all_markers_from_config(paradigm_name: str) -> list[Marker]:
+    from parC.yaml_utils.yaml_server import get_yaml_data_safe
+    from parC.yaml_utils.models import resolve_marker
+    from parC.grammar.op_tags import extract_contingent_markers
+
+    markers = []
+    seen = set()
+
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if not paradigm_data:
+        return []
+
+    global_stage = paradigm_data.get("global_stage", None)
+
+    def add_marker(m_dict):
+        try:
+            resolved = resolve_marker(m_dict)
+            key = str(resolved)
+            if key not in seen:
+                seen.add(key)
+                markers.append(resolved)
+            if global_stage and hasattr(resolved, "stage") and resolved.stage is None:
+                staged = resolved._replace(stage=global_stage)
+                staged_key = str(staged)
+                if staged_key not in seen:
+                    seen.add(staged_key)
+                    markers.append(staged)
+        except Exception:
+            pass
+
+    # 1. Global markers
+    if "global_markers" in paradigm_data:
+        for m_dict in paradigm_data["global_markers"]:
+            add_marker(m_dict)
+
+    # 2. Feature markers
+    for feature, ref in paradigm_data.get("feature_markers", {}).items():
+        if ref is not None and isinstance(ref, str) and ref.startswith("$"):
+            data = get_yaml_data_safe("FeatureMarkers", ref)
+            if data and "markers" in data:
+                for val, markers_list in data["markers"].items():
+                    if isinstance(markers_list, list):
+                        for m_dict in markers_list:
+                            add_marker(m_dict)
+
+    # 3. Contingent markers
+    for ref in paradigm_data.get("contingent_markers", []):
+        if isinstance(ref, str) and ref.startswith("$"):
+            data = get_yaml_data_safe("ContingentFeatureMarkers", ref)
+            if data and "markers" in data:
+                contingent_list = extract_contingent_markers(data["markers"])
+                for m_dict in contingent_list:
+                    add_marker(m_dict)
+
+    return markers
+
+
 @observed_cache([get_yaml_dir()])
 def compile_paradigm_grammar(
     paradigm_name: str,
@@ -164,74 +221,7 @@ def compile_paradigm_grammar(
     if paradigm_data is None:
         raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
 
-    feature_map = get_feature_map()
-    combos, _, _ = get_feature_combos_for_paradigm(
-        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
-    )
-
-    part_of_speech = paradigm_data["part_of_speech"]
-    part_of_speech_data = get_yaml_data_safe(
-        yaml_basename=part_of_speech, kind="PartOfSpeech"
-    )
-    lexical_feature_names = part_of_speech_data.get("lexical_features", [])
-
-    referenced_lexical_features = set()
-    contingent_files = paradigm_data.get("contingent_markers", [])
-    for contingent_file in contingent_files:
-        contingent_data = get_yaml_data_safe("ContingentFeatureMarkers", contingent_file)
-        if contingent_data:
-            for f in contingent_data.get("features", []):
-                if f in lexical_feature_names:
-                    referenced_lexical_features.add(f)
-    for f in paradigm_data.get("feature_markers", {}).keys():
-        if f in lexical_feature_names:
-            referenced_lexical_features.add(f)
-
-    if infer_lexical_features:
-        lexical_value_lists = []
-        for fname in lexical_feature_names:
-            if fname not in feature_map:
-                continue
-            if fname in referenced_lexical_features:
-                lexical_value_lists.append([(fname, v) for v in feature_map[fname]])
-
-        if not lexical_value_lists:
-            lexical_combos = [set()]
-        else:
-            import itertools
-            lexical_combos = [
-                set(combo_tuples)
-                for combo_tuples in itertools.product(*lexical_value_lists)
-            ]
-    else:
-        if lexical_features:
-            lex_set = set(lexical_features)
-            lexical_combos = [lex_set]
-            referenced_lexical_features = {f for f, _ in lex_set}
-            lexical_feature_names = sorted(list(referenced_lexical_features))
-        else:
-            lexical_combos = [set()]
-            lexical_feature_names = []
-
-    unique_markers = []
-    seen_marker_keys = set()
-    for lexical_combo in lexical_combos:
-        for feature_values in combos:
-            try:
-                markers = get_markers_for_paradigm(
-                    feature_values,
-                    paradigm_name,
-                    root=None,
-                    lexical_features=lexical_combo,
-                    include_features=False,
-                )
-            except Exception:
-                continue
-            for marker in markers:
-                op_tag = get_op_tag(marker)
-                if op_tag not in seen_marker_keys:
-                    seen_marker_keys.add(op_tag)
-                    unique_markers.append(marker)
+    unique_markers = _get_all_markers_from_config(paradigm_name)
 
     # Order stages
     stage_order = list(paradigm_data.get("stage_order", []))
@@ -251,11 +241,11 @@ def compile_paradigm_grammar(
     # Sequentially compose Phase 1 FST with Phase 2's stage realization transducers
     for stage in execution_stages:
         stage_realization = get_stage_realization_fst(paradigm_name, stage)
-        current_fst = pynini.compose(current_fst, stage_realization).optimize()
+        current_fst = pynini.compose(current_fst, stage_realization)
 
     # Compose with Phase 3's final surface filter
     final_filter = get_final_surface_filter_fst(paradigm_name)
-    current_fst = pynini.compose(current_fst, final_filter).optimize()
+    current_fst = pynini.compose(current_fst, final_filter)
 
     return current_fst
 
@@ -941,50 +931,21 @@ def get_marker_swapping_transducer(marker: Marker) -> pynini.Fst:
     from parC.grammar.transducer_compilation import get_marker_fst, get_trigger_fsa
     from parC.grammar.op_tags import get_op_tag
     from parC.grammar.acceptor_compilation import get_symbol_table, get_sigma_star
-    from parC.fst_utils import ReservedSymbolMixin as R
 
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
     op_tag = get_op_tag(marker)
     T_tag = pynini.accep(op_tag, token_type=syms)
 
-    if hasattr(marker, "kind") and marker.kind == "prefix":
-        bow = pynini.accep(R.bow, token_type=syms)
-        tau = pynini.cross(bow, pynini.concat(bow, fsa(marker.value)))
-        right_context = pynini.concat(sigma_star, pynini.concat(T_tag, sigma_star))
-        insert_prefix = pynini.cdrewrite(tau, "", right_context, sigma_star)
-        delete_tag = pynini.cdrewrite(
-            pynini.cross(T_tag, pynini.accep("", token_type=syms)),
-            "",
-            "",
-            sigma_star,
-        )
-        return pynini.compose(insert_prefix, delete_tag).optimize()
-
-    elif hasattr(marker, "kind") and marker.kind == "suffix":
-        eow = pynini.accep(R.eow, token_type=syms)
-        tau = pynini.cross(eow, pynini.concat(fsa(marker.value), eow))
-        right_context = pynini.concat(sigma_star, pynini.concat(T_tag, sigma_star))
-        insert_suffix = pynini.cdrewrite(tau, "", right_context, sigma_star)
-        delete_tag = pynini.cdrewrite(
-            pynini.cross(T_tag, pynini.accep("", token_type=syms)),
-            "",
-            "",
-            sigma_star,
-        )
-        return pynini.compose(insert_suffix, delete_tag).optimize()
-
-    else:
-        # fallback to gated-composition + tag deletion for rule markers and others
-        trigger_fsa = get_trigger_fsa([op_tag], syms, sigma_star)
-        marker_applied = pynini.compose(trigger_fsa, get_marker_fst(marker))
-        delete_tag = pynini.cdrewrite(
-            pynini.cross(T_tag, pynini.accep("", token_type=syms)),
-            "",
-            "",
-            sigma_star,
-        )
-        return pynini.compose(marker_applied, delete_tag).optimize()
+    trigger_fsa = get_trigger_fsa([op_tag], syms, sigma_star)
+    marker_applied = pynini.compose(trigger_fsa, get_marker_fst(marker))
+    delete_tag = pynini.cdrewrite(
+        pynini.cross(T_tag, pynini.accep("", token_type=syms)),
+        "",
+        "",
+        sigma_star,
+    )
+    return pynini.compose(marker_applied, delete_tag).optimize()
 
 
 @observed_cache([get_yaml_dir()])
@@ -1002,67 +963,7 @@ def get_stage_realization_fst(paradigm_name: str, stage: str) -> pynini.Fst:
     sigma_star = get_sigma_star()
 
     # 1. Find all unique markers for the given paradigm.
-    feature_map = get_feature_map()
-    combos, _, _ = get_feature_combos_for_paradigm(
-        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
-    )
-
-    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-    if paradigm_data is None:
-        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
-    part_of_speech = paradigm_data["part_of_speech"]
-    part_of_speech_data = get_yaml_data_safe(
-        yaml_basename=part_of_speech, kind="PartOfSpeech"
-    )
-    lexical_feature_names = part_of_speech_data.get("lexical_features", [])
-
-    referenced_lexical_features = set()
-    contingent_files = paradigm_data.get("contingent_markers", [])
-    for contingent_file in contingent_files:
-        contingent_data = get_yaml_data_safe("ContingentFeatureMarkers", contingent_file)
-        if contingent_data:
-            for f in contingent_data.get("features", []):
-                if f in lexical_feature_names:
-                    referenced_lexical_features.add(f)
-    for f in paradigm_data.get("feature_markers", {}).keys():
-        if f in lexical_feature_names:
-            referenced_lexical_features.add(f)
-
-    lexical_value_lists = []
-    for fname in lexical_feature_names:
-        if fname not in feature_map:
-            continue
-        if fname in referenced_lexical_features:
-            lexical_value_lists.append([(fname, v) for v in feature_map[fname]])
-
-    if not lexical_value_lists:
-        lexical_combos = [set()]
-    else:
-        import itertools
-        lexical_combos = [
-            set(combo_tuples)
-            for combo_tuples in itertools.product(*lexical_value_lists)
-        ]
-
-    unique_markers = []
-    seen_marker_keys = set()
-    for lexical_combo in lexical_combos:
-        for feature_values in combos:
-            try:
-                markers = get_markers_for_paradigm(
-                    feature_values,
-                    paradigm_name,
-                    root=None,
-                    lexical_features=lexical_combo,
-                    include_features=False,
-                )
-            except Exception:
-                continue
-            for marker in markers:
-                op_tag = get_op_tag(marker)
-                if op_tag not in seen_marker_keys:
-                    seen_marker_keys.add(op_tag)
-                    unique_markers.append(marker)
+    unique_markers = _get_all_markers_from_config(paradigm_name)
 
     # 2. Filter to those whose .stage matches requested stage
     active_markers = [m for m in unique_markers if hasattr(m, "stage") and m.stage == stage]
@@ -1079,15 +980,24 @@ def get_stage_realization_fst(paradigm_name: str, stage: str) -> pynini.Fst:
 
     # 4. Identity map for non-flagged strings
     if active_tags:
-        trigger_union = pynini.union(
-            *[get_trigger_fsa([tag], syms, sigma_star) for tag in active_tags]
+        # Build optimized identity map matching any string not ending in an active tag.
+        # Since tags are only at the end of the word, a string lacks active tags iff
+        # its final symbol is not in active_tags.
+        all_syms = [syms.find(i) for i in range(1, syms.num_symbols())]
+        active_tags_set = set(active_tags)
+        non_tag_symbols = [s for s in all_syms if s not in active_tags_set]
+
+        non_tag_fsa = pynini.union(
+            *[pynini.accep(s, token_type=syms) for s in non_tag_symbols if s]
+        )
+        identity_map = pynini.union(
+            pynini.accep("", token_type=syms),
+            pynini.concat(sigma_star, non_tag_fsa)
         ).optimize()
-        non_flagged = pynini.difference(sigma_star, trigger_union).optimize()
-        identity_map = non_flagged
     else:
         identity_map = sigma_star
 
-    final_fst = pynini.union(identity_map, *triggered_fsts).optimize()
+    final_fst = pynini.union(identity_map, *triggered_fsts)
     return final_fst
 
 
