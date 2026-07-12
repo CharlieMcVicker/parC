@@ -471,3 +471,216 @@ def test_build_inflect_graph_for_root_regex_lexical_inference():
             os.remove(contingent_path)
         if os.path.exists(paradigm_path):
             os.remove(paradigm_path)
+
+
+def test_build_inflect_graph_for_root_regex_verb_a_stem():
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings, fsa
+    from parC.fst_utils import stringify_features
+    import pynini
+
+    # Build the inflect graph for verb_a_stem, root "habl"
+    inflect_graph = build_inflect_graph_for_root_regex("verb_a_stem", "habl")
+    assert isinstance(inflect_graph, pynini.Fst)
+
+    # Verify that a valid combination (2sg present indicative) inflects correctly to "habl-as"
+    feature_values = {"person_number": "2sg", "tense": "present", "mood": "indicative"}
+    feature_str = stringify_features(feature_values)
+    input_fsa = pynini.concat(word_fsa("habl"), fsa(feature_str))
+
+    output_lattice = pynini.compose(input_fsa, inflect_graph).optimize()
+    output_lattice = pynini.project(output_lattice, project_type="output")
+    surface_forms = fsm_strings(output_lattice, strip_all_tags=True)
+    assert "habl-as" in surface_forms
+
+
+def test_parse_with_inverted_open_root_graph():
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
+    import pynini
+
+    # Build the inflect graph with "<Phone>*" as the open-ended root pattern
+    inflect_graph = build_inflect_graph_for_root_regex("verb_a_stem", "<Phone>*")
+    assert isinstance(inflect_graph, pynini.Fst)
+
+    # Invert the graph to get the parse graph
+    parse_graph = pynini.invert(inflect_graph).optimize()
+
+    # Verify that "habl-as" parses back to "habl" with features [person_number=2sg][tense=present][mood=indicative]
+    form_fsa_habl = word_fsa("habl-as")
+    parse_lattice_habl = pynini.compose(form_fsa_habl, parse_graph).optimize()
+    parse_strs_habl = fsm_strings(parse_lattice_habl)
+    assert any(
+        "habl" in s
+        and "[person_number=2sg]" in s
+        and "[tense=present]" in s
+        and "[mood=indicative]" in s
+        for s in parse_strs_habl
+    )
+
+    # Verify that "cant-as" parses back to "cant" with features [person_number=2sg][tense=present][mood=indicative]
+    form_fsa_cant = word_fsa("cant-as")
+    parse_lattice_cant = pynini.compose(form_fsa_cant, parse_graph).optimize()
+    parse_strs_cant = fsm_strings(parse_lattice_cant)
+    assert any(
+        "cant" in s
+        and "[person_number=2sg]" in s
+        and "[tense=present]" in s
+        and "[mood=indicative]" in s
+        for s in parse_strs_cant
+    )
+
+
+def test_parse_with_discharged_features():
+    from parC.grammar.paradigm_compilation import get_open_parse_graph
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
+    import pynini
+
+    # 1. Get the open parse graph for verb_a_stem
+    parse_graph = get_open_parse_graph("verb_a_stem")
+    assert isinstance(parse_graph, pynini.Fst)
+
+    # 2. Parse "habl-as" (indicative present 2sg) without restriction
+    form_fsa = word_fsa("habl-as")
+    parse_lattice = pynini.compose(form_fsa, parse_graph).optimize()
+    parse_strs = fsm_strings(parse_lattice)
+    assert any("[tense=present]" in s for s in parse_strs)
+
+    # 3. Parse "habl-as<tense.discharged=present>" to restrict parses
+    form_fsa_restricted = word_fsa("habl-as<tense.discharged=present>")
+    parse_lattice_restricted = pynini.compose(
+        form_fsa_restricted, parse_graph
+    ).optimize()
+    parse_strs_restricted = fsm_strings(parse_lattice_restricted)
+    assert len(parse_strs_restricted) > 0
+    # Every resulting parse must have [tense=present]
+    for s in parse_strs_restricted:
+        assert "[tense=present]" in s
+
+    # 4. Parse "habl-as<tense.discharged=past>" which should return NO parses
+    form_fsa_invalid = word_fsa("habl-as<tense.discharged=past>")
+    parse_lattice_invalid = pynini.compose(form_fsa_invalid, parse_graph).optimize()
+    parse_strs_invalid = fsm_strings(parse_lattice_invalid)
+    assert len(parse_strs_invalid) == 0
+
+
+def test_feature_value_acceptors():
+    from parC.constants import get_yaml_dir
+    from parC.yaml_utils.yaml_server import get_yaml_kind
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import get_feature_acceptor_fsts
+    import yaml
+
+    yaml_dir = get_yaml_dir()
+    features_dir = os.path.join(yaml_dir, "Exponence", "FeatureDefinitions")
+    pos_dir = os.path.join(yaml_dir, "Lexicon", "PartOfSpeech")
+    paradigm_dir = os.path.join(yaml_dir, "Morphotactics", "Paradigm")
+
+    os.makedirs(features_dir, exist_ok=True)
+    os.makedirs(pos_dir, exist_ok=True)
+    os.makedirs(paradigm_dir, exist_ok=True)
+
+    feature_file = os.path.join(features_dir, "acceptor_test_features.yaml")
+    pos_file = os.path.join(pos_dir, "acceptor_test_pos.yaml")
+    markers_file = os.path.join(
+        yaml_dir, "Exponence", "FeatureMarkers", "acceptor_test_markers.yaml"
+    )
+    paradigm_file = os.path.join(paradigm_dir, "acceptor_test_paradigm.yaml")
+
+    feature_data = {
+        "kind": "FeatureDefinitions",
+        "features": {
+            "acceptor_prefix_class": [
+                "normal",
+                {"name": "e_stem", "acceptor": "e<Phone>*"},
+            ],
+            "acceptor_person_number": ["1sg", "2sg"],
+        },
+    }
+
+    pos_data = {
+        "kind": "PartOfSpeech",
+        "name": "acceptor_test_pos",
+        "lexical_features": ["acceptor_prefix_class"],
+        "features": ["acceptor_person_number"],
+    }
+
+    markers_data = {
+        "kind": "FeatureMarkers",
+        "feature": "acceptor_person_number",
+        "markers": {
+            "1sg": [{"kind": "suffix", "value": "-test"}],
+            "2sg": [{"kind": "suffix", "value": "-test"}],
+        },
+    }
+
+    paradigm_data = {
+        "kind": "Paradigm",
+        "part_of_speech": "$acceptor_test_pos",
+        "feature_markers": {"acceptor_person_number": "$acceptor_test_markers"},
+    }
+
+    with open(feature_file, "w", encoding="utf-8") as f:
+        yaml.dump(feature_data, f)
+    with open(pos_file, "w", encoding="utf-8") as f:
+        yaml.dump(pos_data, f)
+    os.makedirs(os.path.dirname(markers_file), exist_ok=True)
+    with open(markers_file, "w", encoding="utf-8") as f:
+        yaml.dump(markers_data, f)
+    with open(paradigm_file, "w", encoding="utf-8") as f:
+        yaml.dump(paradigm_data, f)
+
+    try:
+        # Clear lru_cache and observed caches
+        from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
+        from parC.grammar.acceptor_compilation import (
+            get_feature_acceptor_fsts,
+            get_pattern_fsts,
+        )
+
+        _get_yaml_data_safe_cached.cache_clear()
+        get_feature_acceptor_fsts.cache_clear()
+        get_pattern_fsts.cache_clear()
+
+        # Let's verify feature acceptors compilation
+        feature_acceptors = get_feature_acceptor_fsts()
+        assert "acceptor_prefix_class=e_stem" in feature_acceptors
+
+        # Test valid input (stem starting with e under e_stem constraint)
+        # We can build root regex for root "evla" under lexical feature acceptor_prefix_class=e_stem
+        inf_valid = build_inflect_graph_for_root_regex(
+            "acceptor_test_paradigm",
+            "evla",
+            lexical_features={"acceptor_prefix_class": "e_stem"},
+        )
+        assert inf_valid.num_states() > 0
+
+        # Test invalid input (stem starting with a under e_stem constraint)
+        inf_invalid = build_inflect_graph_for_root_regex(
+            "acceptor_test_paradigm",
+            "avla",
+            lexical_features={"acceptor_prefix_class": "e_stem"},
+        )
+        # Should be filtered out, meaning empty FST / 0 states
+        assert inf_invalid.num_states() == 0
+
+    finally:
+        # Clean up temporary test files
+        csv_file = os.path.join(
+            yaml_dir, "Lexicon", "Wordlists", "acceptor_test_pos.csv"
+        )
+        for p in [feature_file, pos_file, markers_file, paradigm_file, csv_file]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+        from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
+        from parC.grammar.acceptor_compilation import (
+            get_feature_acceptor_fsts,
+            get_pattern_fsts,
+        )
+
+        _get_yaml_data_safe_cached.cache_clear()
+        get_feature_acceptor_fsts.cache_clear()
+        get_pattern_fsts.cache_clear()

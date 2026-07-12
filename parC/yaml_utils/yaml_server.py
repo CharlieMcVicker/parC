@@ -44,6 +44,7 @@ from parC.yaml_utils.models import (
     FeatureValue,
     UnorderedMarker,
     PrincipalPartMarker,
+    FeatureValueDef,
 )
 
 """
@@ -53,6 +54,7 @@ from parC.yaml_utils.models import (
 
 import functools
 import copy
+
 
 @functools.lru_cache(maxsize=1024)
 def _get_yaml_data_safe_cached(kind: str, yaml_basename: str, file_hash: str) -> dict:
@@ -72,6 +74,7 @@ def _get_yaml_data_safe_cached(kind: str, yaml_basename: str, file_hash: str) ->
 
     return yaml_data
 
+
 def get_yaml_data_safe(kind: str, yaml_basename: str) -> dict:
     """
     Load a single YAML file and validate its contents against the expected schema.
@@ -87,6 +90,7 @@ def get_yaml_data_safe(kind: str, yaml_basename: str) -> dict:
         return None
 
     from parC.yaml_utils.cache import get_file_sha256
+
     file_hash = get_file_sha256(yaml_file_path)
 
     data = _get_yaml_data_safe_cached(kind, yaml_basename, file_hash)
@@ -264,11 +268,13 @@ def get_feature_map() -> dict[str, tuple[str, ...]]:
                     f"Duplicate feature found: {feature_name} in {file_path}"
                 )
                 continue
-            normalized_values = [
-                val["name"] if isinstance(val, dict) else val
-                for val in feature_data
-            ]
-            features[feature_name] = tuple(normalized_values) + ("unmarked",)
+            names = []
+            for item in feature_data:
+                if isinstance(item, str):
+                    names.append(item)
+                elif isinstance(item, dict):
+                    names.append(item["name"])
+            features[feature_name] = tuple(names) + ("unmarked",)
 
     return features
 
@@ -287,13 +293,18 @@ def get_feature_array() -> tuple[Feature]:
 
     for _, yaml_data in features_yaml_data:
         for feature_name, feature_data in yaml_data["features"].items():
-            normalized_values = [
-                val["name"] if isinstance(val, dict) else val
-                for val in feature_data
-            ]
-            features.append(
-                Feature(name=feature_name, values=tuple(normalized_values) + ("unmarked",))
-            )
+            normalized_vals = []
+            for item in feature_data:
+                if isinstance(item, str):
+                    normalized_vals.append(FeatureValueDef(name=item, acceptor=None))
+                elif isinstance(item, dict):
+                    normalized_vals.append(
+                        FeatureValueDef(
+                            name=item["name"], acceptor=item.get("acceptor")
+                        )
+                    )
+            normalized_vals.append(FeatureValueDef(name="unmarked", acceptor=None))
+            features.append(Feature(name=feature_name, values=tuple(normalized_vals)))
 
     return tuple(features)
 
