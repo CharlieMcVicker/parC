@@ -58,6 +58,7 @@ def build_symbol_table(
     for feature in features:
         for value in feature.values:
             syms.add_symbol(f"[{feature.name}={value}]")
+            syms.add_symbol(f"<{feature.name}.discharged={value}>")
     for sym in R.boundary_symbols:
         syms.add_symbol(sym)
     for sym in R.edit_tags:
@@ -127,6 +128,7 @@ def _build_special_fsas(
     for feat in features:
         for val in feat.values:
             all_tags.append(f"[{feat.name}={val}]")
+            all_tags.append(f"<{feat.name}.discharged={val}>")
     from parC.grammar.op_tags import get_all_op_tags
     for op_tag in get_all_op_tags():
         all_tags.append(op_tag)
@@ -229,6 +231,7 @@ def _build_token_map(
     for feat in features:
         for val in feat.values:
             tokens["tag"].append(Token(f"[{feat.name}={val}]", "tag"))
+            tokens["tag"].append(Token(f"<{feat.name}.discharged={val}>", "tag"))
 
     from parC.grammar.op_tags import get_all_op_tags
     for op_tag in get_all_op_tags():
@@ -307,6 +310,8 @@ def _infer_token_type(s: str, phone_starts: set[str]) -> str:
     if c == "[":
         return "tag"
     if c == "<":
+        if ".discharged=" in s:
+            return "tag"
         return "ref"
     if c in R.unary_operators:
         return "unary_operator"
@@ -678,7 +683,16 @@ def fsa(pattern_str: str) -> pynini.Fst:
     ]
 )
 def word_fsa(word_str: str, prefix: str | None = None) -> pynini.Fst:
-    tagged = R.bow + word_str + R.eow
+    import re
+    # Extract trailing discharged tags to place them outside [EOW]
+    match = re.search(r"((?:<[^>]+\.discharged=[^>]+>)+)$", word_str)
+    if match:
+        tags = match.group(1)
+        base_word = word_str[:-len(tags)]
+        tagged = R.bow + base_word + R.eow + tags
+    else:
+        tagged = R.bow + word_str + R.eow
+        
     if prefix:
         tagged = prefix + tagged
     token_map, phone_starts, compiled, syms, sigma, special_fsas = _cached_context()

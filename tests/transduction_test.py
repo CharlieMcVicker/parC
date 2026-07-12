@@ -612,8 +612,33 @@ def test_parse_with_inverted_open_root_graph():
     )
 
 
+def test_parse_with_discharged_features():
+    from parC.grammar.paradigm_compilation import get_open_parse_graph
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
+    import pynini
 
+    # 1. Get the open parse graph for verb_a_stem
+    parse_graph = get_open_parse_graph("verb_a_stem")
+    assert isinstance(parse_graph, pynini.Fst)
 
+    # 2. Parse "habl-as" (indicative present 2sg) without restriction
+    form_fsa = word_fsa("habl-as")
+    parse_lattice = pynini.compose(form_fsa, parse_graph).optimize()
+    parse_strs = fsm_strings(parse_lattice)
+    assert any("[tense=present]" in s for s in parse_strs)
 
+    # 3. Parse "habl-as<tense.discharged=present>" to restrict parses
+    form_fsa_restricted = word_fsa("habl-as<tense.discharged=present>")
+    parse_lattice_restricted = pynini.compose(form_fsa_restricted, parse_graph).optimize()
+    parse_strs_restricted = fsm_strings(parse_lattice_restricted)
+    assert len(parse_strs_restricted) > 0
+    # Every resulting parse must have [tense=present]
+    for s in parse_strs_restricted:
+        assert "[tense=present]" in s
 
+    # 4. Parse "habl-as<tense.discharged=past>" which should return NO parses
+    form_fsa_invalid = word_fsa("habl-as<tense.discharged=past>")
+    parse_lattice_invalid = pynini.compose(form_fsa_invalid, parse_graph).optimize()
+    parse_strs_invalid = fsm_strings(parse_lattice_invalid)
+    assert len(parse_strs_invalid) == 0
 
