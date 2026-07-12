@@ -73,9 +73,21 @@ class RuleSequence(NamedTuple):
 Rule = SimpleRule | StringMapRule | RuleSequence
 
 def resolve_rule(data: dict) -> Rule: 
+    # We will adjust data to support the rules parameter if rule_sequence is present
+    adjusted_data = dict(data)
+    if "rule_sequence" in adjusted_data:
+        raw_seq = adjusted_data.pop("rule_sequence")
+        cleaned_seq = []
+        for item in raw_seq:
+            if isinstance(item, dict) and "name" in item:
+                val = item["name"]
+            else:
+                val = str(item)
+            cleaned_seq.append(val.removeprefix("$"))
+        adjusted_data["rules"] = tuple(cleaned_seq)
     for rule_class in (SimpleRule, StringMapRule, RuleSequence):
         try:
-            return rule_class(**data)
+            return rule_class(**adjusted_data)
         except:
             pass
     raise ValueError(f"Could not resolve rule with data {data}")

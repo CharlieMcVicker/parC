@@ -38,6 +38,8 @@ def get_op_tag(marker: Marker) -> str:
                 return f"<exp.suffix.{marker.stage}={marker.value}>"
             return f"<exp.suffix={marker.value}>"
         elif marker.kind == "rule":
+            if marker.stage:
+                return f"<exp.rule.{marker.stage}={marker.value}>"
             return f"<exp.rule={marker.value}>"
         else:
             val_part = slugify(marker.value)
