@@ -180,6 +180,9 @@
           <label class="toggle-label">
             <input type="checkbox" id="fuzzy-toggle-btn"> Fuzzy search
           </label>
+          <label class="toggle-label">
+            <input type="checkbox" id="open-ended-toggle-btn"> Open-ended root &lt;Phone&gt;*
+          </label>
         </div>
 
         <div id="parse-results" hidden>
@@ -189,6 +192,11 @@
               <thead></thead>
               <tbody></tbody>
             </table>
+          </div>
+          <div class="pagination-controls" id="parse-pagination" style="display: none; justify-content: center; align-items: center; gap: 1rem; margin-top: 1rem;">
+            <button id="parse-prev-btn" class="action-btn secondary-btn" style="margin: 0; padding: 0.4rem 0.8rem; font-size: 0.9rem; background: #4b5563;">&lt; Prev</button>
+            <span id="parse-page-info" style="font-size: 0.95rem;">Page 1 of 1</span>
+            <button id="parse-next-btn" class="action-btn secondary-btn" style="margin: 0; padding: 0.4rem 0.8rem; font-size: 0.9rem; background: #4b5563;">Next &gt;</button>
           </div>
         </div>
       </div>

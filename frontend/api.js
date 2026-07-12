@@ -64,11 +64,11 @@ export async function testRule(rule, testMappings) {
   return res.json();
 }
 
-export async function parse(kind, name, form) {
+export async function parse(kind, name, form, openEnded = false) {
   const res = await fetch("/parse", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind, name, form }),
+    body: JSON.stringify({ kind, name, form, open_ended: openEnded }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -77,11 +77,11 @@ export async function parse(kind, name, form) {
   return res.json();
 }
 
-export async function search(kind, name, form) {
+export async function search(kind, name, form, openEnded = false) {
   const res = await fetch("/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind, name, form }),
+    body: JSON.stringify({ kind, name, form, open_ended: openEnded }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

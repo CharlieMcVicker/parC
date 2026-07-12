@@ -598,6 +598,12 @@ def get_parse_graph(paradigm_name: str) -> pynini.Fst:
     return _get_or_build(paradigm_name, "parse")
 
 
+@observed_cache([get_yaml_dir()])
+def get_open_parse_graph(paradigm_name: str) -> pynini.Fst:
+    inflect_graph = build_inflect_graph_for_root_regex(paradigm_name, "<Phone>*", infer_lexical_features=True)
+    return pynini.invert(inflect_graph).optimize()
+
+
 def get_search_graphs(paradigm_name: str) -> tuple[pynini.Fst, pynini.Fst]:
     return (
         _get_or_build(paradigm_name, "search_lexicon"),
@@ -611,9 +617,9 @@ Public API
 
 
 @observed_cache([get_yaml_dir()])
-def parse(form: str, kind: str = "Paradigm", name: str = "") -> list[dict]:
+def parse(form: str, kind: str = "Paradigm", name: str = "", open_ended: bool = False) -> list[dict]:
     form_fsa = word_fsa(form)
-    parse_graph = get_parse_graph(name)
+    parse_graph = get_open_parse_graph(name) if open_ended else get_parse_graph(name)
     paradigm_data = get_yaml_data_safe(yaml_basename=name, kind=kind)
     lexicon_basename = paradigm_data.get("part_of_speech", "")
 
@@ -756,7 +762,7 @@ def inflect_stages(
 
 @observed_cache([get_yaml_dir()])
 def search(
-    kind: str, name: str, form: str, nshortest: int, do_parse: bool = True
+    kind: str, name: str, form: str, nshortest: int, do_parse: bool = True, open_ended: bool = False
 ) -> list[tuple[str, float]] | list[dict]:
     search_lexicon, left_factor = get_search_graphs(name)
     form_fsa = word_fsa(form)
@@ -767,7 +773,7 @@ def search(
     if do_parse:
         parses = []
         for hit, weight in hits:
-            current_parse = [item.copy() for item in parse(hit, kind=kind, name=name)]
+            current_parse = [item.copy() for item in parse(hit, kind=kind, name=name, open_ended=open_ended)]
             [parse_item.update(edit_distance=weight) for parse_item in current_parse]
             [parse_item.update(form=hit) for parse_item in current_parse]
             parses.extend(current_parse)

@@ -147,6 +147,7 @@ class ParseRequest(BaseModel):
     kind: str = "Paradigm"
     name: str
     form: str
+    open_ended: bool = False
 
 
 class ParadigmInfo(BaseModel):
@@ -316,6 +317,7 @@ class SearchRequest(BaseModel):
     name: str
     form: str
     nshortest: int = 10
+    open_ended: bool = False
 
 
 @app.post("/inflect")
@@ -337,7 +339,7 @@ def api_inflect(req: InflectRequest):
 @app.post("/parse")
 def api_parse(req: ParseRequest):
     try:
-        parses = parse(form=req.form, kind=req.kind, name=req.name)
+        parses = parse(form=req.form, kind=req.kind, name=req.name, open_ended=req.open_ended)
     except Exception as e:
         logger.exception(f"Error during parsing: {e}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -353,6 +355,7 @@ def api_search(req: SearchRequest):
             nshortest=req.nshortest,
             do_parse=True,
             kind=req.kind,
+            open_ended=req.open_ended,
         )
     except Exception as e:
         logger.exception(f"Error during search: {e}")
