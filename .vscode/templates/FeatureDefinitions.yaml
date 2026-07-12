@@ -7,17 +7,26 @@ features:
   # type fd-feature to add your first feature!
    feature name:
      - feature value
+     # You can also define structural/phonological constraints directly on feature values using the structured syntax:
+     - name: e_stem
+       acceptor: e<Phone>* # Constrains the stem to start with 'e' (omit [BOW]/[EOW] in acceptors)
 
 ## HELP FOR FEATURE DEFINITIONS ##
 # Here we define inflectional and (possibly) derivational or lexical features
 # for a given language.
+#
+# Feature values can be defined either as a simple string or as a structured object
+# with 'name' and an optional 'acceptor' pattern string. 
 
 # e.g.
 # kind: FeatureDefinitions
 # features:
-#     person_numer: [1sg, 2sg, 3sg, 1pl, 2pl, 3pl]
+#     person_number: [1sg, 2sg, 3sg, 1pl, 2pl, 3pl]
 #     tense: [present, past, future]
-#     mood: [indicative, imperative, subjunctive]
+#     prefix_class:
+#       - normal
+#       - name: e_stem
+#         acceptor: e<Phone>* # stem must start with 'e' (acceptor is a pattern string)
 
 # each feature name and value should be given as a single word with no spaces
 # underscores are allowed, e.g. person_number

@@ -92,6 +92,14 @@ def resolve_rule(data: dict) -> Rule:
             pass
     raise ValueError(f"Could not resolve rule with data {data}")
 
+class FeatureValueDef(NamedTuple):
+    """
+    A feature value definition, which may have an optional acceptor pattern.
+    """
+    name: str
+    acceptor: str | None = None
+
+
 class FeatureValue(NamedTuple):
     """
     A value for a specific feature.
@@ -107,7 +115,7 @@ class Feature(NamedTuple):
     """
 
     name: str
-    values: tuple[str, ...]
+    values: tuple[FeatureValueDef, ...]
 
 OperationTypeSingleString = Literal["prefix", "suffix", "suppletion", "rule"]
 OperationTypeStringTuple = Literal["replace"]

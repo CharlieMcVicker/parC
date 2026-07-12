@@ -57,8 +57,8 @@ def build_symbol_table(
         syms.add_symbol(tag)
     for feature in features:
         for value in feature.values:
-            syms.add_symbol(f"[{feature.name}={value}]")
-            syms.add_symbol(f"<{feature.name}.discharged={value}>")
+            syms.add_symbol(f"[{feature.name}={value.name}]")
+            syms.add_symbol(f"<{feature.name}.discharged={value.name}>")
     for sym in R.boundary_symbols:
         syms.add_symbol(sym)
     for sym in R.edit_tags:
@@ -127,8 +127,8 @@ def _build_special_fsas(
     all_tags = list(dict.fromkeys(inventory.tags))
     for feat in features:
         for val in feat.values:
-            all_tags.append(f"[{feat.name}={val}]")
-            all_tags.append(f"<{feat.name}.discharged={val}>")
+            all_tags.append(f"[{feat.name}={val.name}]")
+            all_tags.append(f"<{feat.name}.discharged={val.name}>")
     from parC.grammar.op_tags import get_all_op_tags
     for op_tag in get_all_op_tags():
         all_tags.append(op_tag)
@@ -230,8 +230,8 @@ def _build_token_map(
 
     for feat in features:
         for val in feat.values:
-            tokens["tag"].append(Token(f"[{feat.name}={val}]", "tag"))
-            tokens["tag"].append(Token(f"<{feat.name}.discharged={val}>", "tag"))
+            tokens["tag"].append(Token(f"[{feat.name}={val.name}]", "tag"))
+            tokens["tag"].append(Token(f"<{feat.name}.discharged={val.name}>", "tag"))
 
     from parC.grammar.op_tags import get_all_op_tags
     for op_tag in get_all_op_tags():
@@ -627,6 +627,44 @@ def get_pattern_fsts() -> dict[str, pynini.Fst]:
     )
     save_cached_pattern_fsts(cache_key, pattern_fsts)
     return pattern_fsts
+
+
+@observed_cache(
+    [
+        kind_dir("Patterns"),
+        kind_dir("Inventory"),
+        kind_dir("FeatureDefinitions"),
+    ]
+)
+def get_feature_acceptor_fsts() -> dict[str, pynini.Fst]:
+    """Returns compiled feature value acceptors (feature=value -> FST constraint)."""
+    syms = get_symbol_table()
+    inventory = get_inventory_items()
+    features = get_feature_array()
+    patterns = get_patterns()
+    special_fsas = get_special_fsas()
+    pattern_fsts = get_pattern_fsts()
+    phone_starts = {p[0] for p in inventory.phones}
+    token_map = _build_token_map(syms, inventory, features, patterns)
+
+    feature_acceptors = {}
+    for feature in features:
+        for val in feature.values:
+            if val.acceptor:
+                try:
+                    fst = _parse_pattern(
+                        val.acceptor,
+                        token_map,
+                        phone_starts,
+                        pattern_fsts,
+                        syms,
+                        special_fsas["sigma"],
+                        special_fsas,
+                    )
+                    feature_acceptors[f"{feature.name}={val.name}"] = fst
+                except Exception as e:
+                    raise ValueError(f"Error compiling feature acceptor for [{feature.name}={val.name}]: {e}") from e
+    return feature_acceptors
 
 
 """

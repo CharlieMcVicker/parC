@@ -98,6 +98,32 @@ def get_roots_for_paradigm(paradigm_name: str) -> list[str]:
 """
 
 
+def _apply_feature_acceptor_constraints(
+    root_fsa: pynini.Fst,
+    feature_values: list[tuple[str, str]] | set[tuple[str, str]] | tuple[tuple[str, str], ...],
+) -> pynini.Fst:
+    """
+    Applies any feature-value acceptor constraints defined on the feature_values
+    by intersecting the root_fsa (which contains [BOW]...[EOW]) with the feature acceptors.
+    """
+    from parC.grammar.acceptor_compilation import get_feature_acceptor_fsts
+    feature_acceptors = get_feature_acceptor_fsts()
+    if not feature_acceptors:
+        return root_fsa
+
+    constrained_fsa = root_fsa
+    for f, v in feature_values:
+        key = f"{f}={v}"
+        if key in feature_acceptors:
+            acceptor_fst = feature_acceptors[key]
+            # Wrap acceptor_fst with [BOW] and [EOW] to match root_fsa
+            bow_fsa = pynini.accep(R.bow, token_type=get_symbol_table())
+            eow_fsa = pynini.accep(R.eow, token_type=get_symbol_table())
+            wrapped_acceptor = pynini.concat(bow_fsa, pynini.concat(acceptor_fst, eow_fsa)).optimize()
+            constrained_fsa = pynini.intersect(constrained_fsa, wrapped_acceptor).optimize()
+    return constrained_fsa
+
+
 def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
     """root[features...] → surface form."""
     paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
@@ -114,12 +140,16 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
     for root in roots:
         root_fsa = word_fsa(root)
         for feature_values in combos:
+            constrained_root_fsa = _apply_feature_acceptor_constraints(root_fsa, feature_values)
+            if constrained_root_fsa.num_states() == 0:
+                continue
+
             try:
                 markers = get_markers_for_paradigm(
                     feature_values, paradigm_name, root=root
                 )
                 inflected_output = pynini.project(
-                    _apply_markers(root_fsa, markers), project_type="output"
+                    _apply_markers(constrained_root_fsa, markers), project_type="output"
                 )
             except Exception:
                 # logger.debug(
@@ -129,7 +159,7 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
 
             feature_str = stringify_features(feature_values)
             inflect_input = (
-                pynini.concat(root_fsa, fsa(feature_str)) if feature_str else root_fsa
+                pynini.concat(constrained_root_fsa, fsa(feature_str)) if feature_str else constrained_root_fsa
             )
             inflect_fsts.append(
                 pynini.cross(inflect_input, inflected_output).optimize()
@@ -463,7 +493,12 @@ def get_or_build_root_regex_graphs(
                 
             inflectional_fsa = get_feature_fsa(feature_values)
             
-            inflect_input = root_fsa
+            all_cell_features = list(feature_values) + list(lexical_combo)
+            constrained_root_fsa = _apply_feature_acceptor_constraints(root_fsa, all_cell_features)
+            if constrained_root_fsa.num_states() == 0:
+                continue
+
+            inflect_input = constrained_root_fsa
             if infer_lexical_features and lexical_fsa:
                 inflect_input = pynini.concat(inflect_input, lexical_fsa)
             if inflectional_fsa is not None:

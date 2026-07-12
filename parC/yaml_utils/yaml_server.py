@@ -40,6 +40,7 @@ from parC.yaml_utils.models import (
     Rule,
     resolve_rule,
     Feature,
+    FeatureValueDef,
 )
 
 """
@@ -259,7 +260,13 @@ def get_feature_map() -> dict[str, tuple[str, ...]]:
                     f"Duplicate feature found: {feature_name} in {file_path}"
                 )
                 continue
-            features[feature_name] = tuple(feature_data) + ("unmarked",)
+            names = []
+            for item in feature_data:
+                if isinstance(item, str):
+                    names.append(item)
+                elif isinstance(item, dict):
+                    names.append(item["name"])
+            features[feature_name] = tuple(names) + ("unmarked",)
 
     return features
 
@@ -278,8 +285,15 @@ def get_feature_array() -> tuple[Feature]:
 
     for _, yaml_data in features_yaml_data:
         for feature_name, feature_data in yaml_data["features"].items():
+            normalized_vals = []
+            for item in feature_data:
+                if isinstance(item, str):
+                    normalized_vals.append(FeatureValueDef(name=item, acceptor=None))
+                elif isinstance(item, dict):
+                    normalized_vals.append(FeatureValueDef(name=item["name"], acceptor=item.get("acceptor")))
+            normalized_vals.append(FeatureValueDef(name="unmarked", acceptor=None))
             features.append(
-                Feature(name=feature_name, values=tuple(feature_data) + ("unmarked",))
+                Feature(name=feature_name, values=tuple(normalized_vals))
             )
 
     return tuple(features)
