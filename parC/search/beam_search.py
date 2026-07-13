@@ -41,6 +41,9 @@ class WfsaCsr(NamedTuple):
         Returns:
         A `CSR` named tuple containing the CSR representation of the FST.
         """
+        from parC.pynini_graph import GraphNode
+        if isinstance(wfsa, GraphNode):
+            wfsa = wfsa.compile()
 
         # beam search will expect an epsilon-free deterministic arc-sorted WFSA
         wfsa = pynini.rmepsilon(wfsa)

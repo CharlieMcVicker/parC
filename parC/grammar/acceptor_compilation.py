@@ -793,16 +793,17 @@ def fsm_strings_and_weights(
     strip_word_edge_symbols: bool = False,
     strip_all_tags: bool = False,
 ) -> list[tuple[str, float]]:
-    if hasattr(fst, "compile"):
+    from parC.pynini_graph import GraphNode
+    if isinstance(fst, GraphNode):
         fst = fst.compile()
     syms = get_symbol_table()
     projected = pynini.project(fst, project_type=project)
-    if hasattr(projected, "compile"):
+    if isinstance(projected, GraphNode):
         projected = projected.compile()
     if nshortest is not None:
         projected = rewrite.lattice_to_nshortest(
             projected, nshortest=nshortest)
-        if hasattr(projected, "compile"):
+        if isinstance(projected, GraphNode):
             projected = projected.compile()
     seen: set[str] = set()
     decoded: list[tuple[str, float]] = []

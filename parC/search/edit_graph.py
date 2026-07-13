@@ -47,6 +47,9 @@ def print_fst(f):
 
 
 def decode_lattice(lattice: pynini.Fst) -> list[tuple[str, float]]:
+    from parC.pynini_graph import GraphNode
+    if isinstance(lattice, GraphNode):
+        lattice = lattice.compile()
     result = []
 
     path_iter = lattice.paths()
