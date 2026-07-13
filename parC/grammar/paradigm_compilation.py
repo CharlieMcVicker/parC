@@ -12,9 +12,9 @@ from __future__ import annotations
 import os
 import re
 
-import pynini
+from parC import pynini_graph as pynini
 from loguru import logger
-from pynini.lib import pynutil
+from parC.pynini_graph import pynutil
 from typing import NamedTuple
 from frozendict import frozendict
 
@@ -177,8 +177,12 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
             )
 
     if not inflect_fsts:
-        return pynini.Fst()
-    return pynini.union(*inflect_fsts).optimize()
+        res = pynini.Fst()
+    else:
+        res = pynini.union(*inflect_fsts).optimize()
+    if hasattr(res, "set_name"):
+        res.set_name(f"build_inflect_graph: {paradigm_name}")
+    return res
 
 
 def _get_all_markers_from_config(paradigm_name: str) -> list[Marker]:
@@ -745,7 +749,10 @@ def _get_or_build(
     _save_paradigm_cached(cache_key, inflect, parse, search_lexicon, search_left_factor)
 
     graph_tuple = (inflect, parse, search_lexicon, search_left_factor)
-    return graph_tuple[graph_index]
+    res = graph_tuple[graph_index]
+    if hasattr(res, "set_name"):
+        res.set_name(f"_get_or_build: {paradigm_name} ({graph_type})")
+    return res
 
 
 def get_inflect_graph(paradigm_name: str) -> pynini.Fst:

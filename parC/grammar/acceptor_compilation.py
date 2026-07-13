@@ -20,7 +20,7 @@ from collections import defaultdict
 from graphlib import TopologicalSorter
 from typing import Literal
 
-import pynini
+from parC import pynini_graph as pynini
 from pynini.lib import rewrite
 
 from parC.yaml_utils.cache import (
@@ -626,6 +626,9 @@ def get_pattern_fsts() -> dict[str, pynini.Fst]:
         class_fsts,
     )
     save_cached_pattern_fsts(cache_key, pattern_fsts)
+    for name, fst in pattern_fsts.items():
+        if hasattr(fst, "set_name"):
+            fst.set_name(f"get_pattern_fsts: {name}")
     return pattern_fsts
 
 
@@ -708,9 +711,12 @@ def _cached_context() -> tuple[
 )
 def fsa(pattern_str: str) -> pynini.Fst:
     token_map, phone_starts, compiled, syms, sigma, special_fsas = _cached_context()
-    return _parse_pattern(
+    res = _parse_pattern(
         pattern_str, token_map, phone_starts, compiled, syms, sigma, special_fsas
     )
+    if hasattr(res, "set_name"):
+        res.set_name(f"fsa: {pattern_str}")
+    return res
 
 
 @observed_cache(
@@ -734,9 +740,12 @@ def word_fsa(word_str: str, prefix: str | None = None) -> pynini.Fst:
     if prefix:
         tagged = prefix + tagged
     token_map, phone_starts, compiled, syms, sigma, special_fsas = _cached_context()
-    return _parse_pattern(
+    res = _parse_pattern(
         tagged, token_map, phone_starts, compiled, syms, sigma, special_fsas
     )
+    if hasattr(res, "set_name"):
+        res.set_name(f"word_fsa: {word_str}")
+    return res
 
 
 @observed_cache(
@@ -747,7 +756,10 @@ def word_fsa(word_str: str, prefix: str | None = None) -> pynini.Fst:
     ]
 )
 def wordlist_fsa(words: list[str]) -> pynini.Fst:
-    return pynini.union(*[word_fsa(w) for w in words]).optimize()
+    res = pynini.union(*[word_fsa(w) for w in words]).optimize()
+    if hasattr(res, "set_name"):
+        res.set_name(f"wordlist_fsa: {len(words)} words")
+    return res
 
 
 """
@@ -781,11 +793,17 @@ def fsm_strings_and_weights(
     strip_word_edge_symbols: bool = False,
     strip_all_tags: bool = False,
 ) -> list[tuple[str, float]]:
+    if hasattr(fst, "compile"):
+        fst = fst.compile()
     syms = get_symbol_table()
     projected = pynini.project(fst, project_type=project)
+    if hasattr(projected, "compile"):
+        projected = projected.compile()
     if nshortest is not None:
         projected = rewrite.lattice_to_nshortest(
             projected, nshortest=nshortest)
+        if hasattr(projected, "compile"):
+            projected = projected.compile()
     seen: set[str] = set()
     decoded: list[tuple[str, float]] = []
     path_iter = projected.paths()

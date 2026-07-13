@@ -625,6 +625,7 @@ def test_parse_with_discharged_features():
     form_fsa = word_fsa("habl-as")
     parse_lattice = pynini.compose(form_fsa, parse_graph).optimize()
     parse_strs = fsm_strings(parse_lattice)
+    print("DEBUG PARSE_STRS:", parse_strs)
     assert any("[tense=present]" in s for s in parse_strs)
 
     # 3. Parse "habl-as<tense.discharged=present>" to restrict parses

@@ -1,5 +1,5 @@
 import os
-import pynini
+from parC import pynini_graph as pynini
 from parC.grammar.acceptor_compilation import fsa, fsm_strings
 from parC.yaml_utils.models import SingleStringMarker
 from parC.grammar.transducer_compilation import compile_marker, compile_gated_marker, get_gated_marker_fst

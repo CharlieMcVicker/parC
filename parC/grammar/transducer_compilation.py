@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import pynini
+from parC import pynini_graph as pynini
 
 from parC.fst_utils import ReservedSymbolMixin as R
 from parC.yaml_utils.models import (
@@ -62,9 +62,15 @@ def _compile_string_map_rule(rule: StringMapRule) -> pynini.Fst:
 
 def compile_rule(rule: Rule) -> pynini.Fst | list[pynini.Fst]:
     if isinstance(rule, SimpleRule):
-        return _compile_simple_rule(rule)
+        res = _compile_simple_rule(rule)
+        if hasattr(res, "set_name"):
+            res.set_name(f"compile_rule: {getattr(rule, 'name', 'simple_rule')}")
+        return res
     if isinstance(rule, StringMapRule):
-        return _compile_string_map_rule(rule)
+        res = _compile_string_map_rule(rule)
+        if hasattr(res, "set_name"):
+            res.set_name(f"compile_rule: {getattr(rule, 'name', 'string_map_rule')}")
+        return res
     if isinstance(rule, RuleSequence):
         rules = get_rules()
         result: list[pynini.Fst] = []
@@ -107,16 +113,17 @@ def _compile_string_map(string_map: tuple[tuple[str, str], ...]) -> pynini.Fst:
 
 
 def compile_marker(marker: Marker) -> pynini.Fst:
+    res = None
     if isinstance(marker, SingleStringMarker):
         if marker.kind == "prefix":
-            return _compile_prefix(marker.value)
-        if marker.kind == "suffix":
-            return _compile_suffix(marker.value)
-        if marker.kind == "suppletion":
+            res = _compile_prefix(marker.value)
+        elif marker.kind == "suffix":
+            res = _compile_suffix(marker.value)
+        elif marker.kind == "suppletion":
             sigma_star = get_sigma_star()
             tau = pynini.cross(sigma_star, fsa(marker.value))
-            return pynini.cdrewrite(tau, "", "", sigma_star)
-        if marker.kind == "rule":
+            res = pynini.cdrewrite(tau, "", "", sigma_star)
+        elif marker.kind == "rule":
             rules = get_rules()
             rule_name = marker.value.removeprefix("$")
             if rule_name not in rules:
@@ -128,20 +135,26 @@ def compile_marker(marker: Marker) -> pynini.Fst:
                 composed = result[0]
                 for f in result[1:]:
                     composed = pynini.compose(composed, f)
-                return composed
-            return result
-    if isinstance(marker, StringTupleMarker) and marker.kind == "replace":
+                res = composed
+            else:
+                res = result
+    elif isinstance(marker, StringTupleMarker) and marker.kind == "replace":
         sigma_star = get_sigma_star()
         tau = pynini.cross(fsa(marker.value[0]), fsa(marker.value[1]))
-        return pynini.cdrewrite(tau, "", "", sigma_star)
-    if isinstance(marker, PrincipalPartMarker) and marker.kind == "string_map":
-        return _compile_string_map(marker.value)
-    if isinstance(marker, UnorderedMarker) and marker.kind == "principal_part":
+        res = pynini.cdrewrite(tau, "", "", sigma_star)
+    elif isinstance(marker, PrincipalPartMarker) and marker.kind == "string_map":
+        res = _compile_string_map(marker.value)
+    elif isinstance(marker, UnorderedMarker) and marker.kind == "principal_part":
         raise ValueError(
             "UnorderedMarker(principal_part) must be resolved to StringMapMarker "
             "via get_markers_for_paradigm before compilation"
         )
-    raise ValueError(f"Unknown marker: {marker!r}")
+    else:
+        raise ValueError(f"Unknown marker: {marker!r}")
+
+    if res is not None and hasattr(res, "set_name"):
+        res.set_name(f"compile_marker: {marker.kind} {getattr(marker, 'value', '')}")
+    return res
 
 
 
@@ -288,6 +301,8 @@ def compile_gated_marker(marker: Marker, trigger_tags: list[str] | tuple[str, ..
         non_trigger_fsa
     ).optimize()
     
+    if hasattr(gated_fst, "set_name"):
+        gated_fst.set_name(f"compile_gated_marker: {marker.kind} with {len(trigger_tags)} tags")
     return gated_fst
 
 

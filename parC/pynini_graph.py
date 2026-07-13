@@ -1,8 +1,15 @@
+import sys
+_old_pynini = sys.modules.pop("pynini", None)
+import pynini as _real_pynini
+if _old_pynini is not None:
+    sys.modules["pynini"] = _old_pynini
+else:
+    sys.modules["pynini"] = _real_pynini
+import pynini
 import hashlib
 import os
 import json
 import time
-import pynini
 from loguru import logger
 from parC.constants import get_yaml_dir
 
@@ -18,7 +25,17 @@ class GraphNode:
         self._compiled_fst = None
         self._cache_key = None
         self.name = name
-        self.num_states = None
+
+    def num_states(self) -> int:
+        if self._compiled_fst is None:
+            self.compile()
+        return self._compiled_fst.num_states()
+
+    def __getattr__(self, name):
+        # Delegate any unhandled attribute/method to the compiled FST
+        if self._compiled_fst is None:
+            self.compile()
+        return getattr(self._compiled_fst, name)
 
     @classmethod
     def constant(cls, val):
@@ -27,11 +44,10 @@ class GraphNode:
         """
         if isinstance(val, GraphNode):
             return val
-        if isinstance(val, pynini.Fst):
+        if isinstance(val, _real_pynini.Fst):
             # For a raw FST constant, we use its pointer/ID or string representation to identify it uniquely
             node = GraphNode(op="constant_fst", children=[], params={"fst_id": id(val)})
             node._compiled_fst = val
-            node.num_states = val.num_states()
             return node
         return GraphNode(op="constant_val", children=[], params={"val": val})
 
@@ -94,8 +110,7 @@ class GraphNode:
         if os.path.exists(cache_path):
             start_time = time.perf_counter()
             try:
-                self._compiled_fst = pynini.Fst.read(cache_path)
-                self.num_states = self._compiled_fst.num_states() if self._compiled_fst else None
+                self._compiled_fst = _real_pynini.Fst.read(cache_path)
                 duration = time.perf_counter() - start_time
                 logger.debug(f"FST Cache Hit: {self} loaded in {duration:.4f}s (key: {cache_key})")
                 return self._compiled_fst
@@ -131,57 +146,67 @@ class GraphNode:
             logger.warning(f"Failed to write graph dependencies to {dep_path}: {e}")
 
         self._compiled_fst = fst
-        self.num_states = self._compiled_fst.num_states() if self._compiled_fst else None
         return fst
 
-    def _execute_op(self, compiled_children: list[pynini.Fst]) -> pynini.Fst:
+    def _execute_op(self, compiled_children: list) -> pynini.Fst:
         op = self.op
+        for i, child in enumerate(compiled_children):
+            if isinstance(child, GraphNode):
+                logger.error(f"CRITICAL TYPE ERROR: self.op={op}, child[{i}] is a GraphNode (op={child.op}, children={len(child.children)}), self.children[{i}] op={self.children[i].op if i < len(self.children) else 'N/A'}")
         if op == "constant_val":
             val = self.params["val"]
             if isinstance(val, str):
-                return pynini.accep(val)
+                return _real_pynini.accep(val)
             return val
         elif op == "constant_fst":
             # Real raw FST constant should be preserved in compilation, let's look up by parameter or raise
             raise RuntimeError("Raw FST constant node compiled without preloaded FST. Use custom GraphNodes where possible.")
         elif op == "accep":
-            return pynini.accep(self.params["string"], token_type=self.params.get("token_type"))
+            token_type = self.params.get("token_type")
+            if isinstance(token_type, str) and (token_type.startswith("<SymbolTable") or token_type.startswith("<pynini.SymbolTable")):
+                from parC.grammar.acceptor_compilation import get_symbol_table
+                token_type = get_symbol_table()
+            kwargs = {}
+            if "weight" in self.params:
+                kwargs["weight"] = self.params["weight"]
+            for k, v in self.params.items():
+                if k not in ("string", "token_type", "weight"):
+                    kwargs[k] = v
+            return _real_pynini.accep(self.params["string"], token_type=token_type, **kwargs)
         elif op == "concat":
             # For a binary tree pairwise concat node
-            return pynini.concat(compiled_children[0], compiled_children[1])
+            return _real_pynini.concat(compiled_children[0], compiled_children[1])
         elif op == "union":
             # For a binary tree pairwise union node
-            return pynini.union(compiled_children[0], compiled_children[1])
+            return _real_pynini.union(compiled_children[0], compiled_children[1])
         elif op == "intersect":
-            return pynini.intersect(compiled_children[0], compiled_children[1])
+            return _real_pynini.intersect(compiled_children[0], compiled_children[1])
         elif op == "difference":
-            return pynini.difference(compiled_children[0], compiled_children[1])
+            return _real_pynini.difference(compiled_children[0], compiled_children[1])
         elif op == "compose":
-            return pynini.compose(compiled_children[0], compiled_children[1])
+            return _real_pynini.compose(compiled_children[0], compiled_children[1])
         elif op == "cdrewrite":
             tau = compiled_children[0]
             lambda_fsa = compiled_children[1]
             rho_fsa = compiled_children[2]
             sigma_fsa = compiled_children[3]
-            return pynini.cdrewrite(tau, lambda_fsa, rho_fsa, sigma_fsa)
+            return _real_pynini.cdrewrite(tau, lambda_fsa, rho_fsa, sigma_fsa)
         elif op == "cross":
-            return pynini.cross(compiled_children[0], compiled_children[1])
+            return _real_pynini.cross(compiled_children[0], compiled_children[1])
         elif op == "project":
-            return pynini.project(compiled_children[0], project_type=self.params["project_type"])
+            return _real_pynini.project(compiled_children[0], project_type=self.params["project_type"])
         elif op == "invert":
-            return pynini.invert(compiled_children[0])
+            return _real_pynini.invert(compiled_children[0])
         elif op == "optimize":
-            return pynini.optimize(compiled_children[0])
+            return _real_pynini.optimize(compiled_children[0])
         elif op == "star":
-            return pynini.closure(compiled_children[0])
+            return _real_pynini.closure(compiled_children[0])
         elif op == "pynutil_delete":
-            from pynini.lib import pynutil as real_pynutil
-            return real_pynutil.delete(compiled_children[0])
+            return _real_pynini.cross(compiled_children[0], "")
         elif op == "pynutil_insert":
-            from pynini.lib import pynutil as real_pynutil
-            return real_pynutil.insert(compiled_children[0])
+            return _real_pynini.cross("", compiled_children[0])
         elif op == "empty_fst":
-            return pynini.Fst()
+            return _real_pynini.Fst()
         else:
             raise NotImplementedError(f"Unsupported operation: {op}")
 
@@ -227,6 +252,10 @@ class GraphNode:
     def copy(self):
         return self
 
+    def write(self, path: str):
+        compiled = self.compile()
+        compiled.write(path)
+
     @property
     def star(self):
         return GraphNode(op="star", children=[self])
@@ -234,13 +263,17 @@ class GraphNode:
 
 # Drop-in Wrapper Functions
 
-def accep(string: str, token_type=None, config_dep=None) -> GraphNode:
+def accep(string: str, token_type=None, weight=None, config_dep=None, **kwargs) -> GraphNode:
     # Use id of SymbolTable or serialize it if possible for params
     token_repr = str(token_type) if token_type is not None else None
+    params = {"string": string, "token_type": token_repr}
+    if weight is not None:
+        params["weight"] = weight
+    params.update(kwargs)
     return GraphNode(
         op="accep",
         children=[],
-        params={"string": string, "token_type": token_repr},
+        params=params,
         config_dep=config_dep
     )
 
@@ -269,11 +302,20 @@ def optimize(fst) -> GraphNode:
     return GraphNode(op="optimize", children=[fst])
 
 
-class Fst(GraphNode):
+class FstMeta(type):
+    def __instancecheck__(cls, instance):
+        return isinstance(instance, GraphNode) or isinstance(instance, _real_pynini.Fst)
+
+
+class Fst(GraphNode, metaclass=FstMeta):
     def __init__(self):
         super().__init__(op="empty_fst", children=[], params={})
-        self._compiled_fst = pynini.Fst()
-        self.num_states = self._compiled_fst.num_states()
+        self._compiled_fst = _real_pynini.Fst()
+
+    @classmethod
+    def read(cls, path: str):
+        fst = _real_pynini.Fst.read(path)
+        return GraphNode.constant(fst)
 
 
 class PynutilDelayed:
@@ -342,7 +384,7 @@ def _generate_mermaid_code(node: GraphNode, visited=None) -> str:
     else:
         label = f"<b>{node.op.upper()}</b>"
         
-    state_text = f"states: {node.num_states}" if node.num_states is not None else "pending compile"
+    state_text = f"states: {node.num_states()}" if node._compiled_fst is not None else "pending compile"
     label += f"<br><font size=2 color=#94a3b8>{state_text}</font>"
     
     if param_str:
@@ -460,3 +502,11 @@ graph TD
     with open(output_path, "w") as f:
         f.write(html_content)
     logger.info(f"Computational graph visualization successfully exported to {output_path}")
+
+
+# Dynamically expose all non-overridden symbols from real pynini for perfect backward compatibility
+import sys
+_current_module = sys.modules[__name__]
+for _name in dir(_real_pynini):
+    if not hasattr(_current_module, _name):
+        setattr(_current_module, _name, getattr(_real_pynini, _name))

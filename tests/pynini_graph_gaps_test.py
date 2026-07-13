@@ -1,8 +1,16 @@
 import os
+import sys
 import pytest
-import pynini
-from pynini.lib import pynutil as real_pynutil
 from parC import pynini_graph
+pynini = pynini_graph._real_pynini
+
+_old = sys.modules.get("pynini")
+sys.modules["pynini"] = pynini
+try:
+    sys.modules.pop("pynini.lib.pynutil", None)
+    from pynini.lib import pynutil as real_pynutil
+finally:
+    sys.modules["pynini"] = _old
 
 def test_graph_node_optimize(tmp_path):
     os.environ["YAML_DIR"] = str(tmp_path)
@@ -122,12 +130,12 @@ def test_graph_node_names_and_state_tracking(tmp_path):
     
     # 3. Test tracking of num_states upon compilation
     node3 = pynini_graph.accep("hello")
-    assert node3.num_states is None
+    assert node3._compiled_fst is None
     
     node3.compile()
-    assert node3.num_states is not None
-    assert isinstance(node3.num_states, int)
-    assert node3.num_states > 0
+    assert node3._compiled_fst is not None
+    assert isinstance(node3.num_states(), int)
+    assert node3.num_states() > 0
     
     # 4. Test visualization code contains the custom name and states
     mermaid_code = pynini_graph._generate_mermaid_code(node1)
@@ -137,5 +145,5 @@ def test_graph_node_names_and_state_tracking(tmp_path):
     
     node1.compile()
     mermaid_code_compiled = pynini_graph._generate_mermaid_code(node1)
-    assert f"states: {node1.num_states}" in mermaid_code_compiled
+    assert f"states: {node1.num_states()}" in mermaid_code_compiled
 
