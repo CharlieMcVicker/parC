@@ -10,8 +10,128 @@ import hashlib
 import os
 import json
 import time
+import atexit
+import threading
+import concurrent.futures
 from loguru import logger
 from parC.constants import get_yaml_dir
+
+_FST_MEM_CACHE = {}
+MAX_STATES_FOR_MEM_CACHE = 1000
+
+# Thread-safe Cache Locks and Synchronization Map
+_CACHE_LOCKS = {}
+_LOCKS_LOCK = threading.Lock()
+_MEM_CACHE_LOCK = threading.Lock()
+_GRAPH_DEPS_LOCK = threading.Lock()
+
+def get_node_lock(cache_key: str) -> threading.Lock:
+    """Returns a thread lock specific to a cache key to prevent concurrent compilation/IO for the same node."""
+    with _LOCKS_LOCK:
+        if cache_key not in _CACHE_LOCKS:
+            _CACHE_LOCKS[cache_key] = threading.Lock()
+        return _CACHE_LOCKS[cache_key]
+
+_GRAPH_DEPS = None
+_GRAPH_DEPS_PATH = None
+
+def _save_graph_deps_at_exit():
+    global _GRAPH_DEPS, _GRAPH_DEPS_PATH
+    if _GRAPH_DEPS is not None and _GRAPH_DEPS_PATH is not None:
+        try:
+            with open(_GRAPH_DEPS_PATH, "w") as f:
+                json.dump(_GRAPH_DEPS, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Failed to write graph dependencies at exit: {e}")
+
+def compile_graph_dynamic_dag(root: "GraphNode", max_workers: int = None) -> pynini.Fst:
+    """
+    Highly-optimal scheduler that compiles nodes as soon as their specific children are compiled.
+    Avoids level-by-level synchronization barriers.
+    """
+    # 1. Collect all unique nodes in the DAG
+    unique_nodes = {}
+    def collect(node: GraphNode):
+        key = node.cache_key
+        if key not in unique_nodes:
+            unique_nodes[key] = node
+            for child in node.children:
+                collect(child)
+    collect(root)
+
+    # 2. Build dependency counts and parent-notification map
+    uncompiled_deps = {} # cache_key -> count of uncompiled children
+    parent_map = {}      # cache_key -> set of parent GraphNodes
+    
+    for key in unique_nodes:
+        parent_map[key] = set()
+        
+    for key, node in unique_nodes.items():
+        uncompiled_children = []
+        for child in node.children:
+            child_compiled = False
+            if child._compiled_fst is not None:
+                child_compiled = True
+            else:
+                with _MEM_CACHE_LOCK:
+                    if child.cache_key in _FST_MEM_CACHE:
+                        child_compiled = True
+            if not child_compiled:
+                uncompiled_children.append(child)
+                
+        uncompiled_deps[key] = len(uncompiled_children)
+        
+        for child in uncompiled_children:
+            parent_map[child.cache_key].add(node)
+
+    # Lock to coordinate atomic updates of uncompiled_deps counts
+    lock = threading.Lock()
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        
+        def on_node_compiled(completed_node: GraphNode):
+            completed_key = completed_node.cache_key
+            
+            with lock:
+                parents = parent_map.get(completed_key, [])
+                for parent in parents:
+                    parent_key = parent.cache_key
+                    uncompiled_deps[parent_key] -= 1
+                    
+                    # Parent has 0 remaining dependencies -> schedule it immediately
+                    if uncompiled_deps[parent_key] == 0:
+                        executor.submit(compile_task, parent)
+
+        def compile_task(node: GraphNode):
+            try:
+                # Compile node (which is now thread-safe)
+                node.compile()
+                on_node_compiled(node)
+            except Exception as e:
+                logger.error(f"Parallel compilation failed for node {node}: {e}")
+                raise e
+
+        # Seed the thread pool with all nodes that have 0 initial uncompiled dependencies
+        with lock:
+            initial_nodes = []
+            for key, node in unique_nodes.items():
+                node_compiled = False
+                if node._compiled_fst is not None:
+                    node_compiled = True
+                else:
+                    with _MEM_CACHE_LOCK:
+                        if key in _FST_MEM_CACHE:
+                            node_compiled = True
+                if uncompiled_deps[key] == 0 and not node_compiled:
+                    initial_nodes.append(node)
+            
+            for node in initial_nodes:
+                executor.submit(compile_task, node)
+
+    return root.compile()
+
+
+atexit.register(_save_graph_deps_at_exit)
 
 class GraphNode:
     """
@@ -95,58 +215,85 @@ class GraphNode:
             child.serialize_subgraph(visited)
         return visited
 
-    def compile(self) -> pynini.Fst:
+    def compile(self, parallel: bool = False, max_workers: int = None) -> pynini.Fst:
+        if parallel:
+            return compile_graph_dynamic_dag(self, max_workers=max_workers)
+
         if self._compiled_fst is not None:
             return self._compiled_fst
 
-        yaml_dir = get_yaml_dir()
-        cache_dir = os.path.join(yaml_dir, ".cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        
         cache_key = self.cache_key
-        cache_path = os.path.join(cache_dir, f"{cache_key}.fst")
-
-        # 1. Try reading from cache
-        if os.path.exists(cache_path):
-            start_time = time.perf_counter()
-            try:
-                self._compiled_fst = _real_pynini.Fst.read(cache_path)
-                duration = time.perf_counter() - start_time
-                logger.debug(f"FST Cache Hit: {self} loaded in {duration:.4f}s (key: {cache_key})")
+        with _MEM_CACHE_LOCK:
+            if cache_key in _FST_MEM_CACHE:
+                self._compiled_fst = _FST_MEM_CACHE[cache_key]
                 return self._compiled_fst
+
+        node_lock = get_node_lock(cache_key)
+        with node_lock:
+            if self._compiled_fst is not None:
+                return self._compiled_fst
+
+            with _MEM_CACHE_LOCK:
+                if cache_key in _FST_MEM_CACHE:
+                    self._compiled_fst = _FST_MEM_CACHE[cache_key]
+                    return self._compiled_fst
+
+            yaml_dir = get_yaml_dir()
+            cache_dir = os.path.join(yaml_dir, ".cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            
+            cache_path = os.path.join(cache_dir, f"{cache_key}.fst")
+
+            # 1. Try reading from cache
+            if os.path.exists(cache_path):
+                start_time = time.perf_counter()
+                try:
+                    compiled_fst = _real_pynini.Fst.read(cache_path)
+                    duration = time.perf_counter() - start_time
+                    logger.debug(f"FST Cache Hit: {self} loaded in {duration:.4f}s (key: {cache_key})")
+                    with _MEM_CACHE_LOCK:
+                        self._compiled_fst = compiled_fst
+                        if compiled_fst.num_states() <= MAX_STATES_FOR_MEM_CACHE:
+                            _FST_MEM_CACHE[cache_key] = compiled_fst
+                    return self._compiled_fst
+                except Exception as e:
+                    logger.warning(f"Failed to read cached FST {cache_path}: {e}. Recompiling...")
+
+            # 2. Compile children
+            compiled_children = [child.compile() for child in self.children]
+
+            # 3. Perform operation & measure timing
+            start_time = time.perf_counter()
+            fst = self._execute_op(compiled_children)
+            duration = time.perf_counter() - start_time
+            logger.debug(f"FST Compiled: {self} in {duration:.4f}s (key: {cache_key})")
+
+            # 4. Save to disk cache
+            try:
+                fst.write(cache_path)
             except Exception as e:
-                logger.warning(f"Failed to read cached FST {cache_path}: {e}. Recompiling...")
+                logger.warning(f"Failed to cache FST to {cache_path}: {e}")
 
-        # 2. Compile children
-        compiled_children = [child.compile() for child in self.children]
+            # 5. Save graph dependencies metadata
+            try:
+                global _GRAPH_DEPS, _GRAPH_DEPS_PATH
+                dep_path = os.path.join(cache_dir, "graph_dependencies.json")
+                with _GRAPH_DEPS_LOCK:
+                    _GRAPH_DEPS_PATH = dep_path
+                    if _GRAPH_DEPS is None:
+                        _GRAPH_DEPS = {}
+                        if os.path.exists(dep_path):
+                            with open(dep_path, "r") as f:
+                                _GRAPH_DEPS = json.load(f)
+                    self.serialize_subgraph(_GRAPH_DEPS)
+            except Exception as e:
+                logger.warning(f"Failed to update graph dependencies: {e}")
 
-        # 3. Perform operation & measure timing
-        start_time = time.perf_counter()
-        fst = self._execute_op(compiled_children)
-        duration = time.perf_counter() - start_time
-        logger.debug(f"FST Compiled: {self} in {duration:.4f}s (key: {cache_key})")
-
-        # 4. Save to disk cache
-        try:
-            fst.write(cache_path)
-        except Exception as e:
-            logger.warning(f"Failed to cache FST to {cache_path}: {e}")
-
-        # 5. Save graph dependencies metadata
-        try:
-            dep_path = os.path.join(cache_dir, "graph_dependencies.json")
-            existing_deps = {}
-            if os.path.exists(dep_path):
-                with open(dep_path, "r") as f:
-                    existing_deps = json.load(f)
-            self.serialize_subgraph(existing_deps)
-            with open(dep_path, "w") as f:
-                json.dump(existing_deps, f, indent=2)
-        except Exception as e:
-            logger.warning(f"Failed to write graph dependencies to {dep_path}: {e}")
-
-        self._compiled_fst = fst
-        return fst
+            self._compiled_fst = fst
+            with _MEM_CACHE_LOCK:
+                if fst.num_states() <= MAX_STATES_FOR_MEM_CACHE:
+                    _FST_MEM_CACHE[cache_key] = fst
+            return fst
 
     def _execute_op(self, compiled_children: list) -> pynini.Fst:
         op = self.op

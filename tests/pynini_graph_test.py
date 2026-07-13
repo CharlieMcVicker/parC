@@ -78,3 +78,52 @@ def test_pynini_graph_visualization(tmp_path):
         content = f.read()
         assert "graph TD" in content
         assert "CONSTANT_VAL" in content or "ACCEP" in content
+
+
+def test_parallel_graph_compilation(tmp_path):
+    os.environ["YAML_DIR"] = str(tmp_path)
+
+    # Build a moderately complex graph
+    node_a = pynini_graph.accep("a")
+    node_b = pynini_graph.accep("b")
+    node_c = pynini_graph.accep("c")
+    node_d = pynini_graph.accep("d")
+
+    u1 = pynini_graph.union(node_a, node_b)
+    u2 = pynini_graph.union(node_c, node_d)
+    root = pynini_graph.concat(u1, u2)
+
+    # Compile via parallel dynamic DAG scheduler
+    parallel_fst = root.compile(parallel=True, max_workers=4)
+    assert parallel_fst is not None
+
+    # Compile via sequential compile (should hit cache/already compiled)
+    seq_fst = root.compile()
+    assert str(parallel_fst) == str(seq_fst)
+
+
+def test_concurrent_compilation_lock_behavior(tmp_path):
+    os.environ["YAML_DIR"] = str(tmp_path)
+
+    import threading
+    import time
+
+    node = pynini_graph.accep("concurrent_test")
+
+    results = []
+    def worker():
+        fst = node.compile()
+        results.append(fst)
+
+    threads = [threading.Thread(target=worker) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # All threads should have successfully retrieved the compiled FST
+    assert len(results) == 5
+    for r in results:
+        assert r is not None
+        assert str(r) == str(results[0])
+

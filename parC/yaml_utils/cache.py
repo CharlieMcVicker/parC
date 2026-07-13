@@ -344,6 +344,14 @@ def observed_cache(directories: list[str]):
                     f"Invalidated cache for {func.__name__}, rebuilding output..."
                 )
                 cached_func.cache_clear()
+                try:
+                    from parC.pynini_graph import _FST_MEM_CACHE
+                    _FST_MEM_CACHE.clear()
+                    import parC.pynini_graph
+                    parC.pynini_graph._GRAPH_DEPS = None
+                    logger.debug("Cleared pynini_graph memory cache and graph deps due to file changes.")
+                except ImportError:
+                    pass
 
             try:
                 args, kwargs = get_hashable_args_and_kwargs(args, kwargs)
