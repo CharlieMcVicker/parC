@@ -162,8 +162,25 @@ class GraphNode:
         self.params = params or {}
         self.config_dep = config_dep or {}
         self._compiled_fst = None
-        self._cache_key = None
         self.name = name
+
+        # Calculate SHA-256 of the node's op, parameters, config dependencies, and children's keys
+        hasher = hashlib.sha256()
+        hasher.update(self.op.encode("utf-8"))
+
+        # Add parameter representation
+        for k, v in sorted(self.params.items()):
+            hasher.update(f"{k}:{v}".encode("utf-8"))
+
+        # Add config dependencies
+        for k, v in sorted(self.config_dep.items()):
+            hasher.update(f"config:{k}:{v}".encode("utf-8"))
+
+        # Add children cache keys
+        for child in self.children:
+            hasher.update(child.cache_key.encode("utf-8"))
+
+        self.cache_key = hasher.hexdigest()
 
     def num_states(self) -> int:
         if self._compiled_fst is None:
@@ -193,30 +210,6 @@ class GraphNode:
             node._compiled_fst = val
             return node
         return GraphNode(op="constant_val", children=[], params={"val": val})
-
-    @property
-    def cache_key(self) -> str:
-        if self._cache_key is not None:
-            return self._cache_key
-
-        # Calculate SHA-256 of the node's op, parameters, config dependencies, and children's keys
-        hasher = hashlib.sha256()
-        hasher.update(self.op.encode("utf-8"))
-
-        # Add parameter representation
-        for k, v in sorted(self.params.items()):
-            hasher.update(f"{k}:{v}".encode("utf-8"))
-
-        # Add config dependencies
-        for k, v in sorted(self.config_dep.items()):
-            hasher.update(f"config:{k}:{v}".encode("utf-8"))
-
-        # Recurse on children cache keys
-        for child in self.children:
-            hasher.update(child.cache_key.encode("utf-8"))
-
-        self._cache_key = hasher.hexdigest()
-        return self._cache_key
 
     def serialize_subgraph(self, visited: dict = None) -> dict:
         """
