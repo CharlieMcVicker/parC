@@ -19,6 +19,8 @@ from loguru import logger
 from parC.constants import get_yaml_dir
 
 _FST_MEM_CACHE = {}
+_FST_OBJECT_HASH_CACHE = {}
+_HASH_CACHE_LOCK = threading.Lock()
 MAX_STATES_FOR_MEM_CACHE = 2000
 
 # Thread-safe Cache Locks and Synchronization Map
@@ -202,8 +204,14 @@ class GraphNode:
             return val
         if isinstance(val, _real_pynini.Fst):
             # Use SHA-256 hash of the compiled FST bytes to identify it uniquely and stably
-            fst_bytes = val.write_to_string()
-            fst_sha = hashlib.sha256(fst_bytes).hexdigest()
+            fst_id = id(val)
+            with _HASH_CACHE_LOCK:
+                if fst_id in _FST_OBJECT_HASH_CACHE:
+                    fst_sha = _FST_OBJECT_HASH_CACHE[fst_id]
+                else:
+                    fst_bytes = val.write_to_string()
+                    fst_sha = hashlib.sha256(fst_bytes).hexdigest()
+                    _FST_OBJECT_HASH_CACHE[fst_id] = fst_sha
             node = GraphNode(
                 op="constant_fst", children=[], params={"fst_sha": fst_sha}
             )

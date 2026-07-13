@@ -127,3 +127,29 @@ def test_concurrent_compilation_lock_behavior(tmp_path):
         assert r is not None
         assert str(r) == str(results[0])
 
+
+def test_pynini_graph_constant_address_caching():
+    import pynini
+    # Create an FST
+    fst = pynini.accep("test_constant_cache").compile()
+    
+    # Verify it is not in the cache yet
+    fst_id = id(fst)
+    if fst_id in pynini_graph._FST_OBJECT_HASH_CACHE:
+        del pynini_graph._FST_OBJECT_HASH_CACHE[fst_id]
+        
+    # Call constant to populate the cache
+    node1 = pynini_graph.GraphNode.constant(fst)
+    assert fst_id in pynini_graph._FST_OBJECT_HASH_CACHE
+    cached_sha = pynini_graph._FST_OBJECT_HASH_CACHE[fst_id]
+    
+    # Overwrite the cache value to verify it retrieves from cache without re-serializing
+    pynini_graph._FST_OBJECT_HASH_CACHE[fst_id] = "dummy_sha_value"
+    
+    node2 = pynini_graph.GraphNode.constant(fst)
+    assert node2.params["fst_sha"] == "dummy_sha_value"
+    
+    # Restore actual cache
+    pynini_graph._FST_OBJECT_HASH_CACHE[fst_id] = cached_sha
+
+
