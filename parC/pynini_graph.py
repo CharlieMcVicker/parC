@@ -10,13 +10,15 @@ class GraphNode:
     """
     A node in the computational graph representing a delayed Pynini FST operation.
     """
-    def __init__(self, op: str, children: list, params: dict = None, config_dep: dict = None):
+    def __init__(self, op: str, children: list, params: dict = None, config_dep: dict = None, name: str = None):
         self.op = op
         self.children = [c if isinstance(c, GraphNode) else GraphNode.constant(c) for c in children]
         self.params = params or {}
         self.config_dep = config_dep or {}
         self._compiled_fst = None
         self._cache_key = None
+        self.name = name
+        self.num_states = None
 
     @classmethod
     def constant(cls, val):
@@ -27,7 +29,10 @@ class GraphNode:
             return val
         if isinstance(val, pynini.Fst):
             # For a raw FST constant, we use its pointer/ID or string representation to identify it uniquely
-            return GraphNode(op="constant_fst", children=[], params={"fst_id": id(val)})
+            node = GraphNode(op="constant_fst", children=[], params={"fst_id": id(val)})
+            node._compiled_fst = val
+            node.num_states = val.num_states()
+            return node
         return GraphNode(op="constant_val", children=[], params={"val": val})
 
     @property
@@ -90,6 +95,7 @@ class GraphNode:
             start_time = time.perf_counter()
             try:
                 self._compiled_fst = pynini.Fst.read(cache_path)
+                self.num_states = self._compiled_fst.num_states() if self._compiled_fst else None
                 duration = time.perf_counter() - start_time
                 logger.debug(f"FST Cache Hit: {self} loaded in {duration:.4f}s (key: {cache_key})")
                 return self._compiled_fst
@@ -125,6 +131,7 @@ class GraphNode:
             logger.warning(f"Failed to write graph dependencies to {dep_path}: {e}")
 
         self._compiled_fst = fst
+        self.num_states = self._compiled_fst.num_states() if self._compiled_fst else None
         return fst
 
     def _execute_op(self, compiled_children: list[pynini.Fst]) -> pynini.Fst:
@@ -163,6 +170,18 @@ class GraphNode:
             return pynini.project(compiled_children[0], project_type=self.params["project_type"])
         elif op == "invert":
             return pynini.invert(compiled_children[0])
+        elif op == "optimize":
+            return pynini.optimize(compiled_children[0])
+        elif op == "star":
+            return pynini.closure(compiled_children[0])
+        elif op == "pynutil_delete":
+            from pynini.lib import pynutil as real_pynutil
+            return real_pynutil.delete(compiled_children[0])
+        elif op == "pynutil_insert":
+            from pynini.lib import pynutil as real_pynutil
+            return real_pynutil.insert(compiled_children[0])
+        elif op == "empty_fst":
+            return pynini.Fst()
         else:
             raise NotImplementedError(f"Unsupported operation: {op}")
 
@@ -186,10 +205,31 @@ class GraphNode:
         return union(other, self)
 
     def __str__(self):
-        return f"GraphNode(op={self.op}, params={self.params})"
+        name_part = f", name={self.name}" if self.name is not None else ""
+        return f"GraphNode(op={self.op}, params={self.params}{name_part})"
 
     def __repr__(self):
         return self.__str__()
+
+    def set_name(self, name: str) -> 'GraphNode':
+        self.name = name
+        return self
+
+    def optimize(self):
+        return GraphNode(op="optimize", children=[self])
+
+    def invert(self):
+        return invert(self)
+
+    def project(self, project_type: str):
+        return project(self, project_type)
+
+    def copy(self):
+        return self
+
+    @property
+    def star(self):
+        return GraphNode(op="star", children=[self])
 
 
 # Drop-in Wrapper Functions
@@ -224,6 +264,27 @@ def project(fst, project_type: str) -> GraphNode:
 
 def invert(fst) -> GraphNode:
     return GraphNode(op="invert", children=[fst])
+
+def optimize(fst) -> GraphNode:
+    return GraphNode(op="optimize", children=[fst])
+
+
+class Fst(GraphNode):
+    def __init__(self):
+        super().__init__(op="empty_fst", children=[], params={})
+        self._compiled_fst = pynini.Fst()
+        self.num_states = self._compiled_fst.num_states()
+
+
+class PynutilDelayed:
+    def delete(self, fst) -> GraphNode:
+        return GraphNode(op="pynutil_delete", children=[fst])
+
+    def insert(self, fst) -> GraphNode:
+        return GraphNode(op="pynutil_insert", children=[fst])
+
+
+pynutil = PynutilDelayed()
 
 
 # Binary-Tree Pairwise Folding Helper
@@ -276,9 +337,16 @@ def _generate_mermaid_code(node: GraphNode, visited=None) -> str:
     if node.config_dep:
         param_str += "<br>config: " + ", ".join(f"{k}={v}" for k, v in node.config_dep.items())
     
-    label = f"<b>{node.op.upper()}</b>"
+    if node.name:
+        label = f"<b>{node.name}</b><br><font size=2>{node.op.upper()}</font>"
+    else:
+        label = f"<b>{node.op.upper()}</b>"
+        
+    state_text = f"states: {node.num_states}" if node.num_states is not None else "pending compile"
+    label += f"<br><font size=2 color=#94a3b8>{state_text}</font>"
+    
     if param_str:
-        label += f"<br><font size=2 color=#94a3b8>{param_str}</font>"
+        label += f"<br><font size=2 color=#64748b>{param_str}</font>"
         
     lines = [f'    {key}["{label}"]']
     for child in node.children:

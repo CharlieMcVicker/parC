@@ -100,13 +100,16 @@ def get_roots_for_paradigm(paradigm_name: str) -> list[str]:
 
 def _apply_feature_acceptor_constraints(
     root_fsa: pynini.Fst,
-    feature_values: list[tuple[str, str]] | set[tuple[str, str]] | tuple[tuple[str, str], ...],
+    feature_values: (
+        list[tuple[str, str]] | set[tuple[str, str]] | tuple[tuple[str, str], ...]
+    ),
 ) -> pynini.Fst:
     """
     Applies any feature-value acceptor constraints defined on the feature_values
     by intersecting the root_fsa (which contains [BOW]...[EOW]) with the feature acceptors.
     """
     from parC.grammar.acceptor_compilation import get_feature_acceptor_fsts
+
     feature_acceptors = get_feature_acceptor_fsts()
     if not feature_acceptors:
         return root_fsa
@@ -119,8 +122,12 @@ def _apply_feature_acceptor_constraints(
             # Wrap acceptor_fst with [BOW] and [EOW] to match root_fsa
             bow_fsa = pynini.accep(R.bow, token_type=get_symbol_table())
             eow_fsa = pynini.accep(R.eow, token_type=get_symbol_table())
-            wrapped_acceptor = pynini.concat(bow_fsa, pynini.concat(acceptor_fst, eow_fsa)).optimize()
-            constrained_fsa = pynini.intersect(constrained_fsa, wrapped_acceptor).optimize()
+            wrapped_acceptor = pynini.concat(
+                bow_fsa, pynini.concat(acceptor_fst, eow_fsa)
+            ).optimize()
+            constrained_fsa = pynini.intersect(
+                constrained_fsa, wrapped_acceptor
+            ).optimize()
     return constrained_fsa
 
 
@@ -140,7 +147,9 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
     for root in roots:
         root_fsa = word_fsa(root)
         for feature_values in combos:
-            constrained_root_fsa = _apply_feature_acceptor_constraints(root_fsa, feature_values)
+            constrained_root_fsa = _apply_feature_acceptor_constraints(
+                root_fsa, feature_values
+            )
             if constrained_root_fsa.num_states() == 0:
                 continue
 
@@ -159,7 +168,9 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
 
             feature_str = stringify_features(feature_values)
             inflect_input = (
-                pynini.concat(constrained_root_fsa, fsa(feature_str)) if feature_str else constrained_root_fsa
+                pynini.concat(constrained_root_fsa, fsa(feature_str))
+                if feature_str
+                else constrained_root_fsa
             )
             inflect_fsts.append(
                 pynini.cross(inflect_input, inflected_output).optimize()
@@ -190,6 +201,7 @@ def _get_all_markers_from_config(paradigm_name: str) -> list[Marker]:
             if hasattr(resolved, "kind") and resolved.kind == "principal_part":
                 from parC.yaml_utils.models import PrincipalPartMarker
                 from parC.lexicon import get_roots, get_principal_part_for_all_roots
+
                 part_of_speech = paradigm_data["part_of_speech"]
                 roots = get_roots(part_of_speech)
                 pps = get_principal_part_for_all_roots(part_of_speech, resolved.value)
@@ -299,8 +311,10 @@ def get_discharged_dropper_fst() -> pynini.Fst:
     for f, vals in feature_map.items():
         for v in vals:
             tag = f"<{f}.discharged={v}>"
-            discharged_delete_parts.append(pynutil.delete(pynini.accep(tag, token_type=syms)))
-    
+            discharged_delete_parts.append(
+                pynutil.delete(pynini.accep(tag, token_type=syms))
+            )
+
     sigma_star = get_sigma_star()
     if discharged_delete_parts:
         delete_union = pynini.union(*discharged_delete_parts)
@@ -317,14 +331,14 @@ def get_optional_discharged_dropper_fst() -> pynini.Fst:
     for f, vals in feature_map.items():
         for v in vals:
             discharged_tags.append(f"<{f}.discharged={v}>")
-            
+
     sigma_star = get_sigma_star()
     if discharged_tags:
         crossings = []
         for t in discharged_tags:
             tag_accep = pynini.accep(t, token_type=syms)
             crossings.append(pynini.union(tag_accep, pynutil.delete(tag_accep)))
-            
+
         rule_union = pynini.union(*crossings)
         dropper = pynini.cdrewrite(rule_union, "", "", sigma_star).optimize()
         return dropper
@@ -346,13 +360,13 @@ def get_or_build_root_regex_graphs(
     from parC.yaml_utils.cache import CACHE_DIR, record_cache_miss, record_cache_save
     import hashlib
     import itertools
-    
+
     # Convert root_regex to string representation for cache key
     if isinstance(root_regex, str):
         regex_str = root_regex
     else:
         regex_str = "FST_" + str(hash(root_regex))
-    
+
     # Convert lexical features to hashable
     lexical_features_hashable = None
     if lexical_features:
@@ -360,19 +374,25 @@ def get_or_build_root_regex_graphs(
             lexical_features_hashable = tuple(sorted(lexical_features.items()))
         else:
             lexical_features_hashable = tuple(sorted(list(lexical_features)))
-            
+
     # Build cache key
     base_key = get_paradigm_cache_key(paradigm_name)
     regex_clean = re.sub(r"[^a-zA-Z0-9_-]", "_", regex_str)[:30]
     regex_hash = hashlib.sha256(regex_str.encode("utf-8")).hexdigest()[:12]
-    cache_key = f"{base_key}_root_{regex_clean}_{regex_hash}_infer_{infer_lexical_features}"
+    cache_key = (
+        f"{base_key}_root_{regex_clean}_{regex_hash}_infer_{infer_lexical_features}"
+    )
     if lexical_features_hashable:
         cache_key += f"_lex_{hash(lexical_features_hashable)}"
-        
+
     inflect_path = os.path.join(CACHE_DIR, f"{cache_key}_root_inflect.fst")
     parse_path = os.path.join(CACHE_DIR, f"{cache_key}_root_parse.fst")
-    
-    if not force_rebuild and os.path.exists(inflect_path) and os.path.exists(parse_path):
+
+    if (
+        not force_rebuild
+        and os.path.exists(inflect_path)
+        and os.path.exists(parse_path)
+    ):
         try:
             inflect_graph = pynini.Fst.read(inflect_path)
             parse_graph = pynini.Fst.read(parse_path)
@@ -381,33 +401,35 @@ def get_or_build_root_regex_graphs(
         except Exception as e:
             logger.debug(f"Root regex cache MISS for {cache_key}: failed to read: {e}")
             record_cache_miss(cache_key)
-            
+
     # Otherwise build them!
     if isinstance(root_regex, str):
         root_fsa = fsa(R.bow + root_regex + R.eow)
     else:
         root_fsa = root_regex
-        
+
     paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
     if paradigm_data is None:
         raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
-        
+
     feature_map = get_feature_map()
     combos, _, _ = get_feature_combos_for_paradigm(
         name=paradigm_name, feature_map=feature_map, kind="Paradigm"
     )
-    
+
     if infer_lexical_features:
         part_of_speech = paradigm_data["part_of_speech"]
         part_of_speech_data = get_yaml_data_safe(
             yaml_basename=part_of_speech, kind="PartOfSpeech"
         )
         lexical_feature_names = part_of_speech_data.get("lexical_features", [])
-        
+
         referenced_lexical_features = set()
         contingent_files = paradigm_data.get("contingent_markers", [])
         for contingent_file in contingent_files:
-            contingent_data = get_yaml_data_safe("ContingentFeatureMarkers", contingent_file)
+            contingent_data = get_yaml_data_safe(
+                "ContingentFeatureMarkers", contingent_file
+            )
             if contingent_data:
                 for f in contingent_data.get("features", []):
                     if f in lexical_feature_names:
@@ -415,7 +437,7 @@ def get_or_build_root_regex_graphs(
         for f in paradigm_data.get("feature_markers", {}).keys():
             if f in lexical_feature_names:
                 referenced_lexical_features.add(f)
-                
+
         lexical_value_lists = []
         for fname in lexical_feature_names:
             if fname not in feature_map:
@@ -425,7 +447,7 @@ def get_or_build_root_regex_graphs(
                 continue
             if fname in referenced_lexical_features:
                 lexical_value_lists.append([(fname, v) for v in feature_map[fname]])
-                
+
         if not lexical_value_lists:
             lexical_combos = [set()]
         else:
@@ -446,14 +468,14 @@ def get_or_build_root_regex_graphs(
             lexical_combos = [set()]
             referenced_lexical_features = set()
             lexical_feature_names = []
-            
+
     input_parts = []
     tag_fsas = {}
     for fname, fvals in feature_map.items():
         for val in fvals:
             tag_str = f"[{fname}={val}]"
             tag_fsas[tag_str] = pynini.accep(tag_str, token_type=get_symbol_table())
-            
+
     def get_feature_fsa(feat_vals) -> pynini.Fst | None:
         if isinstance(feat_vals, (dict, frozendict)):
             feat_vals = list(feat_vals.items())
@@ -465,7 +487,7 @@ def get_or_build_root_regex_graphs(
         for part in parts[1:]:
             curr = pynini.concat(curr, part)
         return curr
-        
+
     for lexical_combo in lexical_combos:
         for feature_values in combos:
             try:
@@ -478,7 +500,7 @@ def get_or_build_root_regex_graphs(
                 )
             except Exception:
                 continue
-                
+
             lexical_parts = []
             for fname in lexical_feature_names:
                 if fname in referenced_lexical_features:
@@ -490,11 +512,13 @@ def get_or_build_root_regex_graphs(
                     lexical_fsa = pynini.concat(lexical_fsa, part)
             else:
                 lexical_fsa = None
-                
+
             inflectional_fsa = get_feature_fsa(feature_values)
-            
+
             all_cell_features = list(feature_values) + list(lexical_combo)
-            constrained_root_fsa = _apply_feature_acceptor_constraints(root_fsa, all_cell_features)
+            constrained_root_fsa = _apply_feature_acceptor_constraints(
+                root_fsa, all_cell_features
+            )
             if constrained_root_fsa.num_states() == 0:
                 continue
 
@@ -504,37 +528,39 @@ def get_or_build_root_regex_graphs(
             if inflectional_fsa is not None:
                 inflect_input = pynini.concat(inflect_input, inflectional_fsa)
             input_parts.append(inflect_input)
-            
+
     if not input_parts:
         return pynini.Fst(), pynini.Fst()
-        
+
     cascade_domain = pynini.union(*input_parts).optimize()
-    
+
     core_grammar_fst = compile_paradigm_grammar(
         paradigm_name,
         infer_lexical_features=infer_lexical_features,
         lexical_features=lexical_features_hashable,
     )
-    
+
     core_graph = pynini.compose(cascade_domain, core_grammar_fst).optimize()
-    
+
     discharged_dropper = get_discharged_dropper_fst()
     if discharged_dropper.num_states() > 0:
         inflect_graph = pynini.compose(core_graph, discharged_dropper).optimize()
     else:
         inflect_graph = core_graph.copy()
-        
+
     optional_discharged_dropper = get_optional_discharged_dropper_fst()
     if optional_discharged_dropper.num_states() > 0:
-        parse_source = pynini.compose(core_graph, optional_discharged_dropper).optimize()
+        parse_source = pynini.compose(
+            core_graph, optional_discharged_dropper
+        ).optimize()
     else:
         parse_source = core_graph
     parse_graph = pynini.invert(parse_source).optimize()
-    
+
     inflect_graph.write(inflect_path)
     parse_graph.write(parse_path)
     record_cache_save(cache_key)
-    
+
     return inflect_graph, parse_graph
 
 
@@ -621,6 +647,7 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
     seen_markers = set()
     try:
         from parC.grammar.transducer_compilation import get_marker_fst_key
+
         feature_map = get_feature_map()
         combos, _, _ = get_feature_combos_for_paradigm(
             name=paradigm_name, feature_map=feature_map, kind="Paradigm"
@@ -634,7 +661,9 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
             except Exception:
                 for root in roots[:5]:
                     try:
-                        markers = get_markers_for_paradigm(combo, paradigm_name, root=root)
+                        markers = get_markers_for_paradigm(
+                            combo, paradigm_name, root=root
+                        )
                         for marker in markers:
                             if isinstance(marker, tuple):
                                 seen_markers.add(marker[0])
@@ -642,19 +671,26 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
                                 seen_markers.add(marker)
                     except Exception:
                         pass
-        
+
         for marker in seen_markers:
             m_key = get_marker_fst_key(marker)
             child_keys[f"Marker/{m_key}"] = m_key
     except Exception as e:
-        logger.warning(f"Error resolving marker dependencies for paradigm {paradigm_name}: {e}")
-        
+        logger.warning(
+            f"Error resolving marker dependencies for paradigm {paradigm_name}: {e}"
+        )
+
     description = f"Paradigm '{paradigm_name}' ({len(seen_markers)} markers resolved)"
-    return compute_cache_key(paradigm_name, "Paradigm", config_dirs, child_keys, description=description)
+    return compute_cache_key(
+        paradigm_name, "Paradigm", config_dirs, child_keys, description=description
+    )
 
 
-def _load_paradigm_cached(cache_key: str) -> tuple[pynini.Fst, pynini.Fst, pynini.Fst, pynini.Fst] | None:
+def _load_paradigm_cached(
+    cache_key: str,
+) -> tuple[pynini.Fst, pynini.Fst, pynini.Fst, pynini.Fst] | None:
     from parC.yaml_utils.cache import CACHE_DIR, record_cache_miss
+
     fsts = []
     for k in _FST_KINDS:
         path = os.path.join(CACHE_DIR, f"{cache_key}_{k}.fst")
@@ -665,7 +701,9 @@ def _load_paradigm_cached(cache_key: str) -> tuple[pynini.Fst, pynini.Fst, pynin
         try:
             fsts.append(pynini.Fst.read(path))
         except Exception as e:
-            logger.debug(f"Paradigm cache MISS for key {cache_key}: failed to read {k}.fst: {e}")
+            logger.debug(
+                f"Paradigm cache MISS for key {cache_key}: failed to read {k}.fst: {e}"
+            )
             record_cache_miss(cache_key)
             return None
     logger.debug(f"Paradigm cache HIT for key {cache_key}")
@@ -680,10 +718,13 @@ def _save_paradigm_cached(
     search_left_factor: pynini.Fst,
 ) -> None:
     from parC.yaml_utils.cache import CACHE_DIR, record_cache_save
+
     inflect.write(os.path.join(CACHE_DIR, f"{cache_key}_inflect.fst"))
     parse.write(os.path.join(CACHE_DIR, f"{cache_key}_parse.fst"))
     search_lexicon.write(os.path.join(CACHE_DIR, f"{cache_key}_search_lexicon.fst"))
-    search_left_factor.write(os.path.join(CACHE_DIR, f"{cache_key}_search_left_factor.fst"))
+    search_left_factor.write(
+        os.path.join(CACHE_DIR, f"{cache_key}_search_left_factor.fst")
+    )
     record_cache_save(cache_key)
 
 
@@ -717,7 +758,9 @@ def get_parse_graph(paradigm_name: str) -> pynini.Fst:
 
 @observed_cache([get_yaml_dir()])
 def get_open_parse_graph(paradigm_name: str) -> pynini.Fst:
-    _, parse_graph = get_or_build_root_regex_graphs(paradigm_name, "<Phone>*", infer_lexical_features=True)
+    _, parse_graph = get_or_build_root_regex_graphs(
+        paradigm_name, "<Phone>*", infer_lexical_features=True
+    )
     return parse_graph
 
 
@@ -734,7 +777,9 @@ Public API
 
 
 @observed_cache([get_yaml_dir()])
-def parse(form: str, kind: str = "Paradigm", name: str = "", open_ended: bool = False) -> list[dict]:
+def parse(
+    form: str, kind: str = "Paradigm", name: str = "", open_ended: bool = False
+) -> list[dict]:
     form_fsa = word_fsa(form)
     parse_graph = get_open_parse_graph(name) if open_ended else get_parse_graph(name)
     paradigm_data = get_yaml_data_safe(yaml_basename=name, kind=kind)
@@ -879,7 +924,12 @@ def inflect_stages(
 
 @observed_cache([get_yaml_dir()])
 def search(
-    kind: str, name: str, form: str, nshortest: int, do_parse: bool = True, open_ended: bool = False
+    kind: str,
+    name: str,
+    form: str,
+    nshortest: int,
+    do_parse: bool = True,
+    open_ended: bool = False,
 ) -> list[tuple[str, float]] | list[dict]:
     search_lexicon, left_factor = get_search_graphs(name)
     form_fsa = word_fsa(form)
@@ -890,7 +940,10 @@ def search(
     if do_parse:
         parses = []
         for hit, weight in hits:
-            current_parse = [item.copy() for item in parse(hit, kind=kind, name=name, open_ended=open_ended)]
+            current_parse = [
+                item.copy()
+                for item in parse(hit, kind=kind, name=name, open_ended=open_ended)
+            ]
             [parse_item.update(edit_distance=weight) for parse_item in current_parse]
             [parse_item.update(form=hit) for parse_item in current_parse]
             parses.extend(current_parse)
@@ -905,9 +958,9 @@ def get_label_to_marker_fst(
     lexical_features: FeatureComboType | dict[str, str] | None = None,
 ) -> pynini.Fst:
     """
-    Constructs the exponence transducer. It maps the sequence of feature tags 
-    (e.g., [prefix_class=a_stem][aspect=present]) to their corresponding sequence 
-    of operational tags for every valid combination of features, while acting 
+    Constructs the exponence transducer. It maps the sequence of feature tags
+    (e.g., [prefix_class=a_stem][aspect=present]) to their corresponding sequence
+    of operational tags for every valid combination of features, while acting
     as the identity on the stem segments and boundaries.
     """
     from parC.yaml_utils.models import Inventory
@@ -918,7 +971,7 @@ def get_label_to_marker_fst(
     syms = get_symbol_table()
     inventory = get_inventory_items()
     phones = list(dict.fromkeys(inventory.phones))
-    
+
     non_feature_symbols = (
         phones
         + list(dict.fromkeys(inventory.tags))  # any non-feature tags from inventory
@@ -949,7 +1002,9 @@ def get_label_to_marker_fst(
         referenced_lexical_features = set()
         contingent_files = paradigm_data.get("contingent_markers", [])
         for contingent_file in contingent_files:
-            contingent_data = get_yaml_data_safe("ContingentFeatureMarkers", contingent_file)
+            contingent_data = get_yaml_data_safe(
+                "ContingentFeatureMarkers", contingent_file
+            )
             if contingent_data:
                 for f in contingent_data.get("features", []):
                     if f in lexical_feature_names:
@@ -969,6 +1024,7 @@ def get_label_to_marker_fst(
             lexical_combos = [set()]
         else:
             import itertools
+
             lexical_combos = [
                 set(combo_tuples)
                 for combo_tuples in itertools.product(*lexical_value_lists)
@@ -1007,7 +1063,7 @@ def get_label_to_marker_fst(
                     val = next((v for f, v in lexical_combo if f == fname), None)
                     if val is not None:
                         input_tag_strs.append(f"[{fname}={val}]")
-            
+
             # Sort inflectional features alphabetically
             sorted_inflect = sorted(list(feature_values))
             for f, v in sorted_inflect:
@@ -1018,7 +1074,9 @@ def get_label_to_marker_fst(
             else:
                 input_fsa = pynini.accep(input_tag_strs[0], token_type=syms)
                 for tag_str in input_tag_strs[1:]:
-                    input_fsa = pynini.concat(input_fsa, pynini.accep(tag_str, token_type=syms))
+                    input_fsa = pynini.concat(
+                        input_fsa, pynini.accep(tag_str, token_type=syms)
+                    )
 
             # Build the sequence of operational tags as an acceptor (the output side), along with discharged feature tags
             all_combo_features = []
@@ -1033,7 +1091,7 @@ def get_label_to_marker_fst(
                         val = next((v for f, v in lexical_combo if f == fname), None)
                         if val is not None:
                             all_combo_features.append((fname, val))
-            
+
             sorted_inflect = sorted(list(feature_values))
             all_combo_features.extend(sorted_inflect)
 
@@ -1041,7 +1099,9 @@ def get_label_to_marker_fst(
             for marker, _ in markers:
                 op_tags_seq.append(get_op_tag(marker))
 
-            discharged_tags_seq = [f"<{f}.discharged={v}>" for f, v in all_combo_features]
+            discharged_tags_seq = [
+                f"<{f}.discharged={v}>" for f, v in all_combo_features
+            ]
             output_tags_seq = discharged_tags_seq + op_tags_seq
 
             if not output_tags_seq:
@@ -1049,7 +1109,9 @@ def get_label_to_marker_fst(
             else:
                 output_fsa = pynini.accep(output_tags_seq[0], token_type=syms)
                 for tag in output_tags_seq[1:]:
-                    output_fsa = pynini.concat(output_fsa, pynini.accep(tag, token_type=syms))
+                    output_fsa = pynini.concat(
+                        output_fsa, pynini.accep(tag, token_type=syms)
+                    )
 
             cross_trans = pynini.cross(input_fsa, output_fsa)
             mapping_list.append(cross_trans)
@@ -1058,7 +1120,9 @@ def get_label_to_marker_fst(
         return non_feature_identity.star.optimize()
 
     mapping_union = pynini.union(*mapping_list).optimize()
-    exponence_transducer = pynini.union(non_feature_identity, mapping_union).star.optimize()
+    exponence_transducer = pynini.union(
+        non_feature_identity, mapping_union
+    ).star.optimize()
     return exponence_transducer
 
 
@@ -1108,7 +1172,9 @@ def get_stage_realization_fst(paradigm_name: str, stage: str) -> pynini.Fst:
     unique_markers = _get_all_markers_from_config(paradigm_name)
 
     # 2. Filter to those whose .stage matches requested stage
-    active_markers = [m for m in unique_markers if hasattr(m, "stage") and m.stage == stage]
+    active_markers = [
+        m for m in unique_markers if hasattr(m, "stage") and m.stage == stage
+    ]
 
     # 3. Build triggered rule FSTs
     triggered_fsts = []
@@ -1133,8 +1199,7 @@ def get_stage_realization_fst(paradigm_name: str, stage: str) -> pynini.Fst:
             *[pynini.accep(s, token_type=syms) for s in non_tag_symbols if s]
         )
         identity_map = pynini.union(
-            pynini.accep("", token_type=syms),
-            pynini.concat(sigma_star, non_tag_fsa)
+            pynini.accep("", token_type=syms), pynini.concat(sigma_star, non_tag_fsa)
         ).optimize()
     else:
         identity_map = sigma_star
@@ -1164,13 +1229,17 @@ def get_final_surface_filter_fst(paradigm_name: str) -> pynini.Fst:
             discharged_tags.append(f"<{f}.discharged={v}>")
     syms = get_symbol_table()
     if discharged_tags:
-        discharged_fsa = pynini.union(*[pynini.accep(t, token_type=syms) for t in discharged_tags])
-        filter_fsa = pynini.union(phone_fsa, boundary_fsa, word_edge_fsa, discharged_fsa).star.optimize()
+        discharged_fsa = pynini.union(
+            *[pynini.accep(t, token_type=syms) for t in discharged_tags]
+        )
+        filter_fsa = pynini.union(
+            phone_fsa, boundary_fsa, word_edge_fsa, discharged_fsa
+        ).star.optimize()
     else:
-        filter_fsa = pynini.union(phone_fsa, boundary_fsa, word_edge_fsa).star.optimize()
+        filter_fsa = pynini.union(
+            phone_fsa, boundary_fsa, word_edge_fsa
+        ).star.optimize()
     return filter_fsa
 
 
 get_final_surface_filter = get_final_surface_filter_fst
-
-
