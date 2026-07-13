@@ -63,7 +63,10 @@ class ReservedSymbolMixin:
     )
 
 
-def is_acceptor(fsa: pynini.Fst) -> bool:
+def is_acceptor(fsa) -> bool:
+    from parC.pynini_graph import GraphNode
+    if isinstance(fsa, GraphNode):
+        fsa = fsa.compile()
     if not isinstance(fsa, pynini.Fst):
         raise ValueError(f"Expected pynini.Fst but got {fsa} for fsa arg.")
     return fsa.properties(pynini.ACCEPTOR, True)

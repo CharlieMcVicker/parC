@@ -1,0 +1,80 @@
+import os
+import shutil
+import pytest
+import pynini
+from parC import pynini_graph
+from parC.constants import get_yaml_dir
+
+def test_pynini_graph_basic_compilation(tmp_path):
+    # Set a temporary yaml dir to isolate the cache
+    os.environ["YAML_DIR"] = str(tmp_path)
+    
+    # 1. Create nodes
+    node_a = pynini_graph.accep("a")
+    node_b = pynini_graph.accep("b")
+    
+    # 2. Binary-tree union optimization
+    union_node = pynini_graph.union(node_a, node_b)
+    
+    # Check that union compiled correctly
+    fst = union_node.compile()
+    assert isinstance(fst, pynini.Fst)
+    
+    # Test that is_acceptor compiles on demand
+    from parC.fst_utils import is_acceptor
+    assert bool(is_acceptor(union_node)) is True
+
+def test_pynini_graph_binary_tree_folding(tmp_path):
+    os.environ["YAML_DIR"] = str(tmp_path)
+    
+    nodes = [pynini_graph.accep(char) for char in ["a", "b", "c", "d"]]
+    union_node = pynini_graph.union(nodes)
+    
+    # Root should be a pairwise union
+    assert union_node.op == "union"
+    assert len(union_node.children) == 2
+    
+    left_child = union_node.children[0]
+    right_child = union_node.children[1]
+    
+    assert left_child.op == "union"
+    assert right_child.op == "union"
+    
+    fst = union_node.compile()
+    assert isinstance(fst, pynini.Fst)
+
+def test_pynini_graph_caching(tmp_path):
+    os.environ["YAML_DIR"] = str(tmp_path)
+    
+    node_a = pynini_graph.accep("a", config_dep={"test_config": "v1"})
+    fst1 = node_a.compile()
+    
+    # Ensure cache file exists
+    cache_dir = os.path.join(str(tmp_path), ".cache")
+    cache_file = os.path.join(cache_dir, f"{node_a.cache_key}.fst")
+    assert os.path.exists(cache_file)
+    
+    # Load again (should be a cache hit)
+    node_a_again = pynini_graph.accep("a", config_dep={"test_config": "v1"})
+    fst2 = node_a_again.compile()
+    assert fst2 is not None
+    
+    # Change config dependency (should be a cache miss)
+    node_a_changed = pynini_graph.accep("a", config_dep={"test_config": "v2"})
+    assert node_a_changed.cache_key != node_a.cache_key
+
+def test_pynini_graph_visualization(tmp_path):
+    os.environ["YAML_DIR"] = str(tmp_path)
+    
+    node_a = pynini_graph.accep("a")
+    node_b = pynini_graph.accep("b")
+    composed = pynini_graph.compose(node_a, node_b)
+    
+    viz_path = os.path.join(str(tmp_path), "test_graph.html")
+    pynini_graph.export_visualization(composed, output_path=viz_path)
+    
+    assert os.path.exists(viz_path)
+    with open(viz_path, "r") as f:
+        content = f.read()
+        assert "graph TD" in content
+        assert "CONSTANT_VAL" in content or "ACCEP" in content
