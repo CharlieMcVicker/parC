@@ -1,6 +1,8 @@
 import sys
+
 _old_pynini = sys.modules.pop("pynini", None)
 import pynini as _real_pynini
+
 if _old_pynini is not None:
     sys.modules["pynini"] = _old_pynini
 else:
@@ -17,13 +19,14 @@ from loguru import logger
 from parC.constants import get_yaml_dir
 
 _FST_MEM_CACHE = {}
-MAX_STATES_FOR_MEM_CACHE = 1000
+MAX_STATES_FOR_MEM_CACHE = 2000
 
 # Thread-safe Cache Locks and Synchronization Map
 _CACHE_LOCKS = {}
 _LOCKS_LOCK = threading.Lock()
 _MEM_CACHE_LOCK = threading.Lock()
 _GRAPH_DEPS_LOCK = threading.Lock()
+
 
 def get_node_lock(cache_key: str) -> threading.Lock:
     """Returns a thread lock specific to a cache key to prevent concurrent compilation/IO for the same node."""
@@ -32,8 +35,10 @@ def get_node_lock(cache_key: str) -> threading.Lock:
             _CACHE_LOCKS[cache_key] = threading.Lock()
         return _CACHE_LOCKS[cache_key]
 
+
 _GRAPH_DEPS = None
 _GRAPH_DEPS_PATH = None
+
 
 def _save_graph_deps_at_exit():
     global _GRAPH_DEPS, _GRAPH_DEPS_PATH
@@ -44,6 +49,7 @@ def _save_graph_deps_at_exit():
         except Exception as e:
             logger.warning(f"Failed to write graph dependencies at exit: {e}")
 
+
 def compile_graph_dynamic_dag(root: "GraphNode", max_workers: int = None) -> pynini.Fst:
     """
     Highly-optimal scheduler that compiles nodes as soon as their specific children are compiled.
@@ -51,21 +57,23 @@ def compile_graph_dynamic_dag(root: "GraphNode", max_workers: int = None) -> pyn
     """
     # 1. Collect all unique nodes in the DAG
     unique_nodes = {}
+
     def collect(node: GraphNode):
         key = node.cache_key
         if key not in unique_nodes:
             unique_nodes[key] = node
             for child in node.children:
                 collect(child)
+
     collect(root)
 
     # 2. Build dependency counts and parent-notification map
-    uncompiled_deps = {} # cache_key -> count of uncompiled children
-    parent_map = {}      # cache_key -> set of parent GraphNodes
-    
+    uncompiled_deps = {}  # cache_key -> count of uncompiled children
+    parent_map = {}  # cache_key -> set of parent GraphNodes
+
     for key in unique_nodes:
         parent_map[key] = set()
-        
+
     for key, node in unique_nodes.items():
         uncompiled_children = []
         for child in node.children:
@@ -78,26 +86,26 @@ def compile_graph_dynamic_dag(root: "GraphNode", max_workers: int = None) -> pyn
                         child_compiled = True
             if not child_compiled:
                 uncompiled_children.append(child)
-                
+
         uncompiled_deps[key] = len(uncompiled_children)
-        
+
         for child in uncompiled_children:
             parent_map[child.cache_key].add(node)
 
     # Lock to coordinate atomic updates of uncompiled_deps counts
     lock = threading.Lock()
-    
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        
+
         def on_node_compiled(completed_node: GraphNode):
             completed_key = completed_node.cache_key
-            
+
             with lock:
                 parents = parent_map.get(completed_key, [])
                 for parent in parents:
                     parent_key = parent.cache_key
                     uncompiled_deps[parent_key] -= 1
-                    
+
                     # Parent has 0 remaining dependencies -> schedule it immediately
                     if uncompiled_deps[parent_key] == 0:
                         executor.submit(compile_task, parent)
@@ -124,7 +132,7 @@ def compile_graph_dynamic_dag(root: "GraphNode", max_workers: int = None) -> pyn
                             node_compiled = True
                 if uncompiled_deps[key] == 0 and not node_compiled:
                     initial_nodes.append(node)
-            
+
             for node in initial_nodes:
                 executor.submit(compile_task, node)
 
@@ -133,13 +141,24 @@ def compile_graph_dynamic_dag(root: "GraphNode", max_workers: int = None) -> pyn
 
 atexit.register(_save_graph_deps_at_exit)
 
+
 class GraphNode:
     """
     A node in the computational graph representing a delayed Pynini FST operation.
     """
-    def __init__(self, op: str, children: list, params: dict = None, config_dep: dict = None, name: str = None):
+
+    def __init__(
+        self,
+        op: str,
+        children: list,
+        params: dict = None,
+        config_dep: dict = None,
+        name: str = None,
+    ):
         self.op = op
-        self.children = [c if isinstance(c, GraphNode) else GraphNode.constant(c) for c in children]
+        self.children = [
+            c if isinstance(c, GraphNode) else GraphNode.constant(c) for c in children
+        ]
         self.params = params or {}
         self.config_dep = config_dep or {}
         self._compiled_fst = None
@@ -165,8 +184,12 @@ class GraphNode:
         if isinstance(val, GraphNode):
             return val
         if isinstance(val, _real_pynini.Fst):
-            # For a raw FST constant, we use its pointer/ID or string representation to identify it uniquely
-            node = GraphNode(op="constant_fst", children=[], params={"fst_id": id(val)})
+            # Use SHA-256 hash of the compiled FST bytes to identify it uniquely and stably
+            fst_bytes = val.write_to_string()
+            fst_sha = hashlib.sha256(fst_bytes).hexdigest()
+            node = GraphNode(
+                op="constant_fst", children=[], params={"fst_sha": fst_sha}
+            )
             node._compiled_fst = val
             return node
         return GraphNode(op="constant_val", children=[], params={"val": val})
@@ -179,19 +202,19 @@ class GraphNode:
         # Calculate SHA-256 of the node's op, parameters, config dependencies, and children's keys
         hasher = hashlib.sha256()
         hasher.update(self.op.encode("utf-8"))
-        
+
         # Add parameter representation
         for k, v in sorted(self.params.items()):
             hasher.update(f"{k}:{v}".encode("utf-8"))
-            
+
         # Add config dependencies
         for k, v in sorted(self.config_dep.items()):
             hasher.update(f"config:{k}:{v}".encode("utf-8"))
-            
+
         # Recurse on children cache keys
         for child in self.children:
             hasher.update(child.cache_key.encode("utf-8"))
-            
+
         self._cache_key = hasher.hexdigest()
         return self._cache_key
 
@@ -209,7 +232,7 @@ class GraphNode:
             "op": self.op,
             "params": self.params,
             "config_dep": self.config_dep,
-            "children": [child.cache_key for child in self.children]
+            "children": [child.cache_key for child in self.children],
         }
         for child in self.children:
             child.serialize_subgraph(visited)
@@ -241,7 +264,7 @@ class GraphNode:
             yaml_dir = get_yaml_dir()
             cache_dir = os.path.join(yaml_dir, ".cache")
             os.makedirs(cache_dir, exist_ok=True)
-            
+
             cache_path = os.path.join(cache_dir, f"{cache_key}.fst")
 
             # 1. Try reading from cache
@@ -250,14 +273,18 @@ class GraphNode:
                 try:
                     compiled_fst = _real_pynini.Fst.read(cache_path)
                     duration = time.perf_counter() - start_time
-                    logger.debug(f"FST Cache Hit: {self} loaded in {duration:.4f}s (key: {cache_key})")
+                    logger.debug(
+                        f"FST Cache Hit: {self} loaded in {duration:.4f}s (key: {cache_key})"
+                    )
                     with _MEM_CACHE_LOCK:
                         self._compiled_fst = compiled_fst
                         if compiled_fst.num_states() <= MAX_STATES_FOR_MEM_CACHE:
                             _FST_MEM_CACHE[cache_key] = compiled_fst
                     return self._compiled_fst
                 except Exception as e:
-                    logger.warning(f"Failed to read cached FST {cache_path}: {e}. Recompiling...")
+                    logger.warning(
+                        f"Failed to read cached FST {cache_path}: {e}. Recompiling..."
+                    )
 
             # 2. Compile children
             compiled_children = [child.compile() for child in self.children]
@@ -299,7 +326,9 @@ class GraphNode:
         op = self.op
         for i, child in enumerate(compiled_children):
             if isinstance(child, GraphNode):
-                logger.error(f"CRITICAL TYPE ERROR: self.op={op}, child[{i}] is a GraphNode (op={child.op}, children={len(child.children)}), self.children[{i}] op={self.children[i].op if i < len(self.children) else 'N/A'}")
+                logger.error(
+                    f"CRITICAL TYPE ERROR: self.op={op}, child[{i}] is a GraphNode (op={child.op}, children={len(child.children)}), self.children[{i}] op={self.children[i].op if i < len(self.children) else 'N/A'}"
+                )
         if op == "constant_val":
             val = self.params["val"]
             if isinstance(val, str):
@@ -307,11 +336,18 @@ class GraphNode:
             return val
         elif op == "constant_fst":
             # Real raw FST constant should be preserved in compilation, let's look up by parameter or raise
-            raise RuntimeError("Raw FST constant node compiled without preloaded FST. Use custom GraphNodes where possible.")
+            raise RuntimeError(
+                "Raw FST constant node compiled without preloaded FST. Use custom GraphNodes where possible."
+            )
         elif op == "accep":
             token_type = self.params.get("token_type")
-            if isinstance(token_type, str) and (token_type.startswith("<SymbolTable") or token_type.startswith("<pynini.SymbolTable")):
+            if isinstance(token_type, str) and (
+                token_type.startswith("<SymbolTable")
+                or token_type.startswith("<pynini.SymbolTable")
+                or token_type.startswith("SymbolTable:")
+            ):
                 from parC.grammar.acceptor_compilation import get_symbol_table
+
                 token_type = get_symbol_table()
             kwargs = {}
             if "weight" in self.params:
@@ -319,7 +355,9 @@ class GraphNode:
             for k, v in self.params.items():
                 if k not in ("string", "token_type", "weight"):
                     kwargs[k] = v
-            return _real_pynini.accep(self.params["string"], token_type=token_type, **kwargs)
+            return _real_pynini.accep(
+                self.params["string"], token_type=token_type, **kwargs
+            )
         elif op == "concat":
             # For a binary tree pairwise concat node
             return _real_pynini.concat(compiled_children[0], compiled_children[1])
@@ -341,7 +379,9 @@ class GraphNode:
         elif op == "cross":
             return _real_pynini.cross(compiled_children[0], compiled_children[1])
         elif op == "project":
-            return _real_pynini.project(compiled_children[0], project_type=self.params["project_type"])
+            return _real_pynini.project(
+                compiled_children[0], project_type=self.params["project_type"]
+            )
         elif op == "invert":
             return _real_pynini.invert(compiled_children[0])
         elif op == "optimize":
@@ -383,7 +423,7 @@ class GraphNode:
     def __repr__(self):
         return self.__str__()
 
-    def set_name(self, name: str) -> 'GraphNode':
+    def set_name(self, name: str) -> "GraphNode":
         self.name = name
         return self
 
@@ -410,40 +450,59 @@ class GraphNode:
 
 # Drop-in Wrapper Functions
 
-def accep(string: str, token_type=None, weight=None, config_dep=None, **kwargs) -> GraphNode:
+
+def accep(
+    string: str, token_type=None, weight=None, config_dep=None, **kwargs
+) -> GraphNode:
     # Use id of SymbolTable or serialize it if possible for params
-    token_repr = str(token_type) if token_type is not None else None
+    if token_type is not None:
+        if isinstance(token_type, _real_pynini.SymbolTable) or hasattr(
+            token_type, "write_to_string"
+        ):
+            token_repr = (
+                "SymbolTable:"
+                + hashlib.sha256(token_type.write_to_string()).hexdigest()
+            )
+        else:
+            token_repr = str(token_type)
+    else:
+        token_repr = None
     params = {"string": string, "token_type": token_repr}
     if weight is not None:
         params["weight"] = weight
     params.update(kwargs)
-    return GraphNode(
-        op="accep",
-        children=[],
-        params=params,
-        config_dep=config_dep
-    )
+    return GraphNode(op="accep", children=[], params=params, config_dep=config_dep)
+
 
 def compose(fst1, fst2) -> GraphNode:
     return GraphNode(op="compose", children=[fst1, fst2])
 
+
 def intersect(fst1, fst2) -> GraphNode:
     return GraphNode(op="intersect", children=[fst1, fst2])
+
 
 def difference(fst1, fst2) -> GraphNode:
     return GraphNode(op="difference", children=[fst1, fst2])
 
+
 def cdrewrite(tau, lambda_fsa, rho_fsa, sigma_fsa) -> GraphNode:
     return GraphNode(op="cdrewrite", children=[tau, lambda_fsa, rho_fsa, sigma_fsa])
+
 
 def cross(fst1, fst2) -> GraphNode:
     return GraphNode(op="cross", children=[fst1, fst2])
 
+
 def project(fst, project_type: str) -> GraphNode:
-    return GraphNode(op="project", children=[fst], params={"project_type": project_type})
+    return GraphNode(
+        op="project", children=[fst], params={"project_type": project_type}
+    )
+
 
 def invert(fst) -> GraphNode:
     return GraphNode(op="invert", children=[fst])
+
 
 def optimize(fst) -> GraphNode:
     return GraphNode(op="optimize", children=[fst])
@@ -478,12 +537,17 @@ pynutil = PynutilDelayed()
 
 # Binary-Tree Pairwise Folding Helper
 
+
 def _fold_balanced_binary_tree(nodes: list, op_fn) -> GraphNode:
     if not nodes:
         raise ValueError("Cannot fold an empty list of nodes")
     if len(nodes) == 1:
-        return nodes[0] if isinstance(nodes[0], GraphNode) else GraphNode.constant(nodes[0])
-    
+        return (
+            nodes[0]
+            if isinstance(nodes[0], GraphNode)
+            else GraphNode.constant(nodes[0])
+        )
+
     mid = len(nodes) // 2
     left = _fold_balanced_binary_tree(nodes[:mid], op_fn)
     right = _fold_balanced_binary_tree(nodes[mid:], op_fn)
@@ -496,9 +560,11 @@ def union(*nodes) -> GraphNode:
     # Resolve any list arguments passed as a single tuple
     if len(nodes) == 1 and isinstance(nodes[0], (list, set, tuple)):
         nodes = list(nodes[0])
-    
+
     # Fold using pairwise union
-    return _fold_balanced_binary_tree(nodes, lambda a, b: GraphNode(op="union", children=[a, b]))
+    return _fold_balanced_binary_tree(
+        nodes, lambda a, b: GraphNode(op="union", children=[a, b])
+    )
 
 
 def concat(*nodes) -> GraphNode:
@@ -506,12 +572,15 @@ def concat(*nodes) -> GraphNode:
         raise ValueError("concat requires at least one node")
     if len(nodes) == 1 and isinstance(nodes[0], (list, set, tuple)):
         nodes = list(nodes[0])
-        
+
     # Fold using pairwise concat
-    return _fold_balanced_binary_tree(nodes, lambda a, b: GraphNode(op="concat", children=[a, b]))
+    return _fold_balanced_binary_tree(
+        nodes, lambda a, b: GraphNode(op="concat", children=[a, b])
+    )
 
 
 # Visualization Layer
+
 
 def _generate_mermaid_code(node: GraphNode, visited=None) -> str:
     if visited is None:
@@ -520,28 +589,34 @@ def _generate_mermaid_code(node: GraphNode, visited=None) -> str:
     if key in visited:
         return ""
     visited.add(key)
-    
+
     # Clean label and params to prevent breaking Mermaid syntax
     param_str = "<br>".join(f"{k}: {v}" for k, v in node.params.items())
     if node.config_dep:
-        param_str += "<br>config: " + ", ".join(f"{k}={v}" for k, v in node.config_dep.items())
-    
+        param_str += "<br>config: " + ", ".join(
+            f"{k}={v}" for k, v in node.config_dep.items()
+        )
+
     if node.name:
         label = f"<b>{node.name}</b><br><font size=2>{node.op.upper()}</font>"
     else:
         label = f"<b>{node.op.upper()}</b>"
-        
-    state_text = f"states: {node.num_states()}" if node._compiled_fst is not None else "pending compile"
+
+    state_text = (
+        f"states: {node.num_states()}"
+        if node._compiled_fst is not None
+        else "pending compile"
+    )
     label += f"<br><font size=2 color=#94a3b8>{state_text}</font>"
-    
+
     if param_str:
         label += f"<br><font size=2 color=#64748b>{param_str}</font>"
-        
+
     lines = [f'    {key}["{label}"]']
     for child in node.children:
-        lines.append(f'    {child.cache_key} --> {key}')
+        lines.append(f"    {child.cache_key} --> {key}")
         lines.append(_generate_mermaid_code(child, visited))
-        
+
     return "\n".join(filter(None, lines))
 
 
@@ -549,9 +624,9 @@ def export_visualization(node: GraphNode, output_path: str = None):
     if output_path is None:
         yaml_dir = get_yaml_dir()
         output_path = os.path.join(yaml_dir, "fst_graph.html")
-        
+
     mermaid_flowchart = _generate_mermaid_code(node)
-    
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -648,11 +723,14 @@ graph TD
 """
     with open(output_path, "w") as f:
         f.write(html_content)
-    logger.info(f"Computational graph visualization successfully exported to {output_path}")
+    logger.info(
+        f"Computational graph visualization successfully exported to {output_path}"
+    )
 
 
 # Dynamically expose all non-overridden symbols from real pynini for perfect backward compatibility
 import sys
+
 _current_module = sys.modules[__name__]
 for _name in dir(_real_pynini):
     if not hasattr(_current_module, _name):
