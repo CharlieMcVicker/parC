@@ -385,6 +385,10 @@ class GraphNode:
             )
         elif op == "invert":
             return _real_pynini.invert(compiled_children[0])
+        elif op == "determinize":
+            return _real_pynini.determinize(compiled_children[0])
+        elif op == "minimize":
+            return _real_pynini.minimize(compiled_children[0])
         elif op == "optimize":
             return _real_pynini.optimize(compiled_children[0])
         elif op == "star":
@@ -433,6 +437,12 @@ class GraphNode:
 
     def invert(self):
         return invert(self)
+
+    def determinize(self):
+        return determinize(self)
+
+    def minimize(self):
+        return minimize(self)
 
     def project(self, project_type: str):
         return project(self, project_type)
@@ -503,6 +513,14 @@ def project(fst, project_type: str) -> GraphNode:
 
 def invert(fst) -> GraphNode:
     return GraphNode(op="invert", children=[fst])
+
+
+def determinize(fst) -> GraphNode:
+    return GraphNode(op="determinize", children=[fst])
+
+
+def minimize(fst) -> GraphNode:
+    return GraphNode(op="minimize", children=[fst])
 
 
 def optimize(fst) -> GraphNode:

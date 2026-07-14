@@ -143,7 +143,10 @@ def compile_marker(marker: Marker) -> pynini.Fst:
         tau = pynini.cross(fsa(marker.value[0]), fsa(marker.value[1]))
         res = pynini.cdrewrite(tau, "", "", sigma_star)
     elif isinstance(marker, PrincipalPartMarker) and marker.kind == "string_map":
-        res = _compile_string_map(marker.value)
+        cross_union = pynini.union(
+            *[pynini.cross(word_fsa(i), word_fsa(o)) for i, o in marker.value]
+        )
+        res = pynini.concat(cross_union, get_sigma_star()).optimize()
     elif isinstance(marker, UnorderedMarker) and marker.kind == "principal_part":
         raise ValueError(
             "UnorderedMarker(principal_part) must be resolved to StringMapMarker "

@@ -16,6 +16,7 @@ from parC import pynini_graph as pynini
 from loguru import logger
 from parC.pynini_graph import pynutil
 from typing import NamedTuple
+from dataclasses import dataclass
 from frozendict import frozendict
 
 from parC.yaml_utils.cache import observed_cache, compute_cache_key
@@ -137,49 +138,91 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
     if paradigm_data is None:
         raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
 
+    infer_lexical_features = True
+
     feature_map = get_feature_map()
     roots = get_roots_for_paradigm(paradigm_name=paradigm_name)
     combos, _, _ = get_feature_combos_for_paradigm(
         name=paradigm_name, feature_map=feature_map, kind="Paradigm"
     )
 
-    inflect_fsts: list[pynini.Fst] = []
+    part_of_speech = paradigm_data["part_of_speech"]
+    part_of_speech_data = get_yaml_data_safe(
+        yaml_basename=part_of_speech, kind="PartOfSpeech"
+    )
+    lexical_feature_names = part_of_speech_data.get("lexical_features", [])
+
+    from parC.lexicon import get_features_for_root
+
+    input_parts = []
+    tag_fsas = {}
+    for fname, fvals in feature_map.items():
+        for val in fvals:
+            tag_str = f"[{fname}={val}]"
+            tag_fsas[tag_str] = pynini.accep(tag_str, token_type=get_symbol_table())
+
+    def get_feature_fsa(feat_vals) -> pynini.Fst | None:
+        if isinstance(feat_vals, (dict, frozendict)):
+            feat_vals = list(feat_vals.items())
+        sorted_feats = sorted(feat_vals)
+        if not sorted_feats:
+            return None
+        parts = [tag_fsas[f"[{f}={v}]"] for f, v in sorted_feats]
+        curr = parts[0]
+        for part in parts[1:]:
+            curr = pynini.concat(curr, part)
+        return curr
+
     for root in roots:
         root_fsa = word_fsa(root)
+        root_lexical_feats = dict(get_features_for_root(part_of_speech, root))
+        
+        lexical_parts = []
+        for fname in lexical_feature_names:
+            if fname in root_lexical_feats:
+                val = root_lexical_feats[fname]
+                lexical_parts.append(tag_fsas[f"[{fname}={val}]"])
+        if lexical_parts:
+            lexical_fsa = lexical_parts[0]
+            for part in lexical_parts[1:]:
+                lexical_fsa = pynini.concat(lexical_fsa, part)
+        else:
+            lexical_fsa = None
+
         for feature_values in combos:
+            all_cell_features = list(feature_values) + list(root_lexical_feats.items())
             constrained_root_fsa = _apply_feature_acceptor_constraints(
-                root_fsa, feature_values
+                root_fsa, all_cell_features
             )
             if constrained_root_fsa.num_states() == 0:
                 continue
 
             try:
-                markers = get_markers_for_paradigm(
+                get_markers_for_paradigm(
                     feature_values, paradigm_name, root=root
                 )
-                inflected_output = pynini.project(
-                    _apply_markers(constrained_root_fsa, markers), project_type="output"
-                )
             except Exception:
-                # logger.debug(
-                #     f"Skipping {paradigm_name} root={root} fv={feature_values}: {e}"
-                # )
                 continue
 
-            feature_str = stringify_features(feature_values)
-            inflect_input = (
-                pynini.concat(constrained_root_fsa, fsa(feature_str))
-                if feature_str
-                else constrained_root_fsa
-            )
-            inflect_fsts.append(
-                pynini.cross(inflect_input, inflected_output).optimize()
-            )
+            inflectional_fsa = get_feature_fsa(feature_values)
 
-    if not inflect_fsts:
+            inflect_input = constrained_root_fsa
+            if lexical_fsa:
+                inflect_input = pynini.concat(inflect_input, lexical_fsa)
+            if inflectional_fsa is not None:
+                inflect_input = pynini.concat(inflect_input, inflectional_fsa)
+            input_parts.append(inflect_input)
+
+    if not input_parts:
         res = pynini.Fst()
     else:
-        res = pynini.union(*inflect_fsts).optimize()
+        cascade_domain = pynini.union(*input_parts).optimize()
+        grammar = compile_paradigm_grammar(
+            paradigm_name,
+            infer_lexical_features=infer_lexical_features
+        )
+        res = grammar.build_inflect_graph(cascade_domain)
+
     if hasattr(res, "set_name"):
         res.set_name(f"build_inflect_graph: {paradigm_name}")
     return res
@@ -255,33 +298,83 @@ def _get_all_markers_from_config(paradigm_name: str) -> list[Marker]:
     return markers
 
 
+@dataclass
+class ParadigmGrammar:
+    fst_1: pynini.Fst
+    fst_2: pynini.Fst
+    filter_constraint: pynini.Fst
+    optimized_parser_2: pynini.Fst
+
+    def __iter__(self):
+        return iter((self.fst_1, self.fst_2, self.filter_constraint, self.optimized_parser_2))
+
+    def build_inflect_graph(self, cascade_domain: pynini.Fst) -> pynini.Fst:
+        core_graph = pynini.compose(pynini.compose(cascade_domain, self.fst_1), self.fst_2).optimize()
+        discharged_dropper = get_discharged_dropper_fst()
+        if discharged_dropper.num_states() > 0:
+            res = pynini.compose(core_graph, discharged_dropper).optimize()
+        else:
+            res = core_graph.copy()
+        return res
+
+    def build_parse_graph(self, cascade_domain: pynini.Fst) -> pynini.Fst:
+        optional_discharged_dropper = get_optional_discharged_dropper_fst()
+        if optional_discharged_dropper.num_states() > 0:
+            parse_graph = pynini.compose(
+                pynini.compose(
+                    pynini.compose(optional_discharged_dropper.invert(), self.optimized_parser_2),
+                    self.fst_1.invert()
+                ),
+                cascade_domain
+            ).optimize()
+        else:
+            parse_graph = pynini.compose(
+                pynini.compose(self.optimized_parser_2, self.fst_1.invert()),
+                cascade_domain
+            ).optimize()
+        return parse_graph
+
+
 @observed_cache([get_yaml_dir()])
 def compile_paradigm_grammar(
     paradigm_name: str,
     infer_lexical_features: bool = False,
     lexical_features: tuple[tuple[str, str], ...] | None = None,
-) -> pynini.Fst:
+) -> ParadigmGrammar:
     """
-    Compile a root-independent paradigm transducer (T_paradigm) exactly once.
-    Covers Phase 1, Phase 2, and Phase 3 of the paradigm FST compilation pipeline.
+    Compile partitioned paradigm transducers sequentially:
+    - FST 1 (Exponence)
+    - Constraint Filter
+    - FST 2 (Realization Chain)
+    - Optimized Parser 2 (Inverted Realization)
     """
     from parC.grammar.op_tags import get_op_tag
 
-    # Phase 1: Label-to-Marker Transducer
-    current_fst = get_label_to_marker_fst(
+    # 1. FST 1 (Exponence)
+    fst_1 = get_label_to_marker_fst(
         paradigm_name,
         infer_lexical_features=infer_lexical_features,
         lexical_features=lexical_features,
     )
+    if hasattr(fst_1, "set_name"):
+        fst_1.set_name("FST_1_Exponence")
+    else:
+        fst_1.name = "FST_1_Exponence"
 
-    # Discover and order all stages present on the paradigm's markers
+    # 2. Constraint Filter
+    filter_constraint = pynini.project(fst_1, project_type="output").determinize().minimize()
+    if hasattr(filter_constraint, "set_name"):
+        filter_constraint.set_name("FST_1_Constraint_Filter")
+    else:
+        filter_constraint.name = "FST_1_Constraint_Filter"
+
+    # 3. FST 2 (Realization Chain)
     paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
     if paradigm_data is None:
         raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
 
     unique_markers = _get_all_markers_from_config(paradigm_name)
 
-    # Order stages
     stage_order = list(paradigm_data.get("stage_order", []))
     if "principal_part" not in stage_order:
         stage_order.insert(0, "principal_part")
@@ -296,16 +389,47 @@ def compile_paradigm_grammar(
     other_stages = sorted(other_stages, key=lambda x: (x is None, str(x)))
     execution_stages.extend(other_stages)
 
-    # Sequentially compose Phase 1 FST with Phase 2's stage realization transducers
+    stages_fsts = []
     for stage in execution_stages:
         stage_realization = get_stage_realization_fst(paradigm_name, stage)
-        current_fst = pynini.compose(current_fst, stage_realization)
+        if hasattr(stage_realization, "set_name"):
+            stage_realization.set_name(f"FST_2_Stage_{stage}")
+        else:
+            stage_realization.name = f"FST_2_Stage_{stage}"
+        stages_fsts.append(stage_realization)
 
-    # Compose with Phase 3's final surface filter
     final_filter = get_final_surface_filter_fst(paradigm_name)
-    current_fst = pynini.compose(current_fst, final_filter)
+    if hasattr(final_filter, "set_name"):
+        final_filter.set_name("FST_2_Surface_Filter")
+    else:
+        final_filter.name = "FST_2_Surface_Filter"
 
-    return current_fst
+    if stages_fsts:
+        fst_2 = stages_fsts[0]
+        for sfst in stages_fsts[1:]:
+            fst_2 = pynini.compose(fst_2, sfst)
+        fst_2 = pynini.compose(fst_2, final_filter)
+    else:
+        fst_2 = final_filter
+
+    if hasattr(fst_2, "set_name"):
+        fst_2.set_name("FST_2_Realization_Chain")
+    else:
+        fst_2.name = "FST_2_Realization_Chain"
+
+    # 4. Optimized Parser 2
+    optimized_parser_2 = pynini.compose(fst_2.invert(), filter_constraint).optimize()
+    if hasattr(optimized_parser_2, "set_name"):
+        optimized_parser_2.set_name("Optimized_Parser_2")
+    else:
+        optimized_parser_2.name = "Optimized_Parser_2"
+
+    return ParadigmGrammar(
+        fst_1=fst_1,
+        fst_2=fst_2,
+        filter_constraint=filter_constraint,
+        optimized_parser_2=optimized_parser_2,
+    )
 
 
 def get_discharged_dropper_fst() -> pynini.Fst:
@@ -350,63 +474,14 @@ def get_optional_discharged_dropper_fst() -> pynini.Fst:
         return pynini.Fst()
 
 
-def get_or_build_root_regex_graphs(
+def build_cascade_domain(
     paradigm_name: str,
     root_regex: str | pynini.Fst,
     lexical_features: FeatureComboType | dict[str, str] | None = None,
     infer_lexical_features: bool = False,
-    force_rebuild: bool = False,
-) -> tuple[pynini.Fst, pynini.Fst]:
-    """
-    Returns (inflect_graph, parse_graph) for a given root regex.
-    Caches them on disk using a key that includes the root pattern.
-    """
-    from parC.yaml_utils.cache import CACHE_DIR, record_cache_miss, record_cache_save
-    import hashlib
+) -> pynini.Fst:
     import itertools
 
-    # Convert root_regex to string representation for cache key
-    if isinstance(root_regex, str):
-        regex_str = root_regex
-    else:
-        regex_str = "FST_" + str(hash(root_regex))
-
-    # Convert lexical features to hashable
-    lexical_features_hashable = None
-    if lexical_features:
-        if isinstance(lexical_features, (dict, frozendict)):
-            lexical_features_hashable = tuple(sorted(lexical_features.items()))
-        else:
-            lexical_features_hashable = tuple(sorted(list(lexical_features)))
-
-    # Build cache key
-    base_key = get_paradigm_cache_key(paradigm_name)
-    regex_clean = re.sub(r"[^a-zA-Z0-9_-]", "_", regex_str)[:30]
-    regex_hash = hashlib.sha256(regex_str.encode("utf-8")).hexdigest()[:12]
-    cache_key = (
-        f"{base_key}_root_{regex_clean}_{regex_hash}_infer_{infer_lexical_features}"
-    )
-    if lexical_features_hashable:
-        cache_key += f"_lex_{hash(lexical_features_hashable)}"
-
-    inflect_path = os.path.join(CACHE_DIR, f"{cache_key}_root_inflect.fst")
-    parse_path = os.path.join(CACHE_DIR, f"{cache_key}_root_parse.fst")
-
-    if (
-        not force_rebuild
-        and os.path.exists(inflect_path)
-        and os.path.exists(parse_path)
-    ):
-        try:
-            inflect_graph = pynini.Fst.read(inflect_path)
-            parse_graph = pynini.Fst.read(parse_path)
-            logger.debug(f"Root regex cache HIT for {paradigm_name} root={regex_str}")
-            return inflect_graph, parse_graph
-        except Exception as e:
-            logger.debug(f"Root regex cache MISS for {cache_key}: failed to read: {e}")
-            record_cache_miss(cache_key)
-
-    # Otherwise build them!
     if isinstance(root_regex, str):
         root_fsa = fsa(R.bow + root_regex + R.eow)
     else:
@@ -441,6 +516,21 @@ def get_or_build_root_regex_graphs(
         for f in paradigm_data.get("feature_markers", {}).keys():
             if f in lexical_feature_names:
                 referenced_lexical_features.add(f)
+        filter_data = paradigm_data.get("filter", {})
+        if filter_data and "lexical_features" in filter_data:
+            filter_lex = filter_data["lexical_features"]
+            if isinstance(filter_lex, dict):
+                for f in filter_lex.keys():
+                    if f in lexical_feature_names:
+                        referenced_lexical_features.add(f)
+            elif isinstance(filter_lex, list):
+                for item in filter_lex:
+                    if isinstance(item, (list, tuple)) and len(item) > 0:
+                        f = item[0]
+                        if f in lexical_feature_names:
+                            referenced_lexical_features.add(f)
+                    elif isinstance(item, str) and item in lexical_feature_names:
+                        referenced_lexical_features.add(item)
 
         lexical_value_lists = []
         for fname in lexical_feature_names:
@@ -534,38 +624,9 @@ def get_or_build_root_regex_graphs(
             input_parts.append(inflect_input)
 
     if not input_parts:
-        return pynini.Fst(), pynini.Fst()
+        return pynini.Fst()
 
-    cascade_domain = pynini.union(*input_parts).optimize()
-
-    core_grammar_fst = compile_paradigm_grammar(
-        paradigm_name,
-        infer_lexical_features=infer_lexical_features,
-        lexical_features=lexical_features_hashable,
-    )
-
-    core_graph = pynini.compose(cascade_domain, core_grammar_fst).optimize()
-
-    discharged_dropper = get_discharged_dropper_fst()
-    if discharged_dropper.num_states() > 0:
-        inflect_graph = pynini.compose(core_graph, discharged_dropper).optimize()
-    else:
-        inflect_graph = core_graph.copy()
-
-    optional_discharged_dropper = get_optional_discharged_dropper_fst()
-    if optional_discharged_dropper.num_states() > 0:
-        parse_source = pynini.compose(
-            core_graph, optional_discharged_dropper
-        ).optimize()
-    else:
-        parse_source = core_graph
-    parse_graph = pynini.invert(parse_source).optimize()
-
-    inflect_graph.write(inflect_path)
-    parse_graph.write(parse_path)
-    record_cache_save(cache_key)
-
-    return inflect_graph, parse_graph
+    return pynini.union(*input_parts).optimize()
 
 
 def build_inflect_graph_for_root_regex(
@@ -575,13 +636,26 @@ def build_inflect_graph_for_root_regex(
     infer_lexical_features: bool = False,
 ) -> pynini.Fst:
     """root_regex[lexical_features][inflectional_features] → surface form."""
-    inflect_graph, _ = get_or_build_root_regex_graphs(
+    cascade_domain = build_cascade_domain(
         paradigm_name,
         root_regex,
         lexical_features=lexical_features,
         infer_lexical_features=infer_lexical_features,
     )
-    return inflect_graph
+    if lexical_features:
+        if isinstance(lexical_features, (dict, frozendict)):
+            lex_tuple = tuple(sorted(lexical_features.items()))
+        else:
+            lex_tuple = tuple(sorted(list(lexical_features)))
+    else:
+        lex_tuple = None
+
+    grammar = compile_paradigm_grammar(
+        paradigm_name,
+        infer_lexical_features=infer_lexical_features,
+        lexical_features=lex_tuple,
+    )
+    return grammar.build_inflect_graph(cascade_domain)
 
 
 def build_parse_graph(inflect_graph: pynini.Fst) -> pynini.Fst:
@@ -744,7 +818,94 @@ def _get_or_build(
             return loaded[graph_index]
 
     inflect = build_inflect_graph(paradigm_name)
-    parse = build_parse_graph(inflect)
+
+    # Compile parsing sequentially:
+    infer_lexical_features = True
+    grammar = compile_paradigm_grammar(
+        paradigm_name,
+        infer_lexical_features=infer_lexical_features
+    )
+
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    part_of_speech = paradigm_data["part_of_speech"]
+    part_of_speech_data = get_yaml_data_safe(
+        yaml_basename=part_of_speech, kind="PartOfSpeech"
+    )
+    lexical_feature_names = part_of_speech_data.get("lexical_features", [])
+
+    from parC.lexicon import get_features_for_root
+
+    roots = get_roots_for_paradigm(paradigm_name=paradigm_name)
+    feature_map = get_feature_map()
+    combos, _, _ = get_feature_combos_for_paradigm(
+        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
+    )
+    input_parts = []
+    tag_fsas = {}
+    for fname, fvals in feature_map.items():
+        for val in fvals:
+            tag_str = f"[{fname}={val}]"
+            tag_fsas[tag_str] = pynini.accep(tag_str, token_type=get_symbol_table())
+
+    def get_feature_fsa(feat_vals) -> pynini.Fst | None:
+        if isinstance(feat_vals, (dict, frozendict)):
+            feat_vals = list(feat_vals.items())
+        sorted_feats = sorted(feat_vals)
+        if not sorted_feats:
+            return None
+        parts = [tag_fsas[f"[{f}={v}]"] for f, v in sorted_feats]
+        curr = parts[0]
+        for part in parts[1:]:
+            curr = pynini.concat(curr, part)
+        return curr
+
+    for root in roots:
+        root_fsa = word_fsa(root)
+        root_lexical_feats = dict(get_features_for_root(part_of_speech, root))
+        
+        lexical_parts = []
+        for fname in lexical_feature_names:
+            if fname in root_lexical_feats:
+                val = root_lexical_feats[fname]
+                lexical_parts.append(tag_fsas[f"[{fname}={val}]"])
+        if lexical_parts:
+            lexical_fsa = lexical_parts[0]
+            for part in lexical_parts[1:]:
+                lexical_fsa = pynini.concat(lexical_fsa, part)
+        else:
+            lexical_fsa = None
+
+        for feature_values in combos:
+            all_cell_features = list(feature_values) + list(root_lexical_feats.items())
+            constrained_root_fsa = _apply_feature_acceptor_constraints(
+                root_fsa, all_cell_features
+            )
+            if constrained_root_fsa.num_states() == 0:
+                continue
+
+            try:
+                get_markers_for_paradigm(
+                    feature_values, paradigm_name, root=root
+                )
+            except Exception:
+                continue
+
+            inflectional_fsa = get_feature_fsa(feature_values)
+
+            inflect_input = constrained_root_fsa
+            if lexical_fsa:
+                inflect_input = pynini.concat(inflect_input, lexical_fsa)
+            if inflectional_fsa is not None:
+                inflect_input = pynini.concat(inflect_input, inflectional_fsa)
+            input_parts.append(inflect_input)
+
+    if not input_parts:
+        cascade_domain = pynini.Fst()
+    else:
+        cascade_domain = pynini.union(*input_parts).optimize()
+
+    parse = grammar.build_parse_graph(cascade_domain)
+
     search_lexicon, search_left_factor = build_search_lexicon_and_leftfactor(inflect)
     _save_paradigm_cached(cache_key, inflect, parse, search_lexicon, search_left_factor)
 
@@ -765,10 +926,14 @@ def get_parse_graph(paradigm_name: str) -> pynini.Fst:
 
 @observed_cache([get_yaml_dir()])
 def get_open_parse_graph(paradigm_name: str) -> pynini.Fst:
-    _, parse_graph = get_or_build_root_regex_graphs(
+    cascade_domain = build_cascade_domain(
         paradigm_name, "<Phone>*", infer_lexical_features=True
     )
-    return parse_graph
+    grammar = compile_paradigm_grammar(
+        paradigm_name,
+        infer_lexical_features=True,
+    )
+    return grammar.build_parse_graph(cascade_domain)
 
 
 def get_search_graphs(paradigm_name: str) -> tuple[pynini.Fst, pynini.Fst]:
@@ -794,12 +959,14 @@ def parse(
 
     parse_lattice = (form_fsa @ parse_graph).optimize()
     parse_strs = fsm_strings(parse_lattice)
+    expected_features = get_features_for_paradigm(name)
     parses = []
     for s in parse_strs:
         feat_matches = re.findall(r"\[([^=\]]+)=([^\]]+)\]", s)
         root = re.sub(r"\[[^\]]+\]", "", s).strip()
         gloss = get_gloss_for_root(lexicon_basename, root)
-        parses.append({"root": root, "features": dict(feat_matches), "gloss": gloss})
+        feat_dict = {f: v for f, v in feat_matches if f in expected_features}
+        parses.append({"root": root, "features": feat_dict, "gloss": gloss})
 
     return parses
 
@@ -823,13 +990,37 @@ def inflect(
             f"Feature set {features} does not match expected features {expected_features} for paradigm '{name}'."
         )
 
+    paradigm_data = get_yaml_data_safe("Paradigm", name)
+    part_of_speech = paradigm_data["part_of_speech"]
+    part_of_speech_data = get_yaml_data_safe(
+        yaml_basename=part_of_speech, kind="PartOfSpeech"
+    )
+    lexical_feature_names = part_of_speech_data.get("lexical_features", [])
+
+    from parC.lexicon import get_features_for_root
+    root_lexical_feats = dict(get_features_for_root(part_of_speech, root))
+
+    lexical_parts = []
+    for fname in lexical_feature_names:
+        if fname in root_lexical_feats:
+            val = root_lexical_feats[fname]
+            lexical_parts.append(pynini.accep(f"[{fname}={val}]", token_type=get_symbol_table()))
+
+    if lexical_parts:
+        lexical_fsa = lexical_parts[0]
+        for part in lexical_parts[1:]:
+            lexical_fsa = pynini.concat(lexical_fsa, part)
+    else:
+        lexical_fsa = None
+
     inflect_graph = get_inflect_graph(name)
     feature_str = stringify_features(feature_values)
-    input_fsa = (
-        pynini.concat(word_fsa(root), fsa(feature_str))
-        if feature_str
-        else word_fsa(root)
-    )
+    input_fsa = word_fsa(root)
+    if lexical_fsa is not None:
+        input_fsa = pynini.concat(input_fsa, lexical_fsa)
+    if feature_str:
+        input_fsa = pynini.concat(input_fsa, fsa(feature_str))
+
     output_lattice = pynini.compose(input_fsa, inflect_graph).optimize()
     output_lattice = pynini.project(output_lattice, project_type="output")
     surface_forms = fsm_strings(output_lattice, strip_all_tags=True)
@@ -1019,6 +1210,21 @@ def get_label_to_marker_fst(
         for f in paradigm_data.get("feature_markers", {}).keys():
             if f in lexical_feature_names:
                 referenced_lexical_features.add(f)
+        filter_data = paradigm_data.get("filter", {})
+        if filter_data and "lexical_features" in filter_data:
+            filter_lex = filter_data["lexical_features"]
+            if isinstance(filter_lex, dict):
+                for f in filter_lex.keys():
+                    if f in lexical_feature_names:
+                        referenced_lexical_features.add(f)
+            elif isinstance(filter_lex, list):
+                for item in filter_lex:
+                    if isinstance(item, (list, tuple)) and len(item) > 0:
+                        f = item[0]
+                        if f in lexical_feature_names:
+                            referenced_lexical_features.add(f)
+                    elif isinstance(item, str) and item in lexical_feature_names:
+                        referenced_lexical_features.add(item)
 
         lexical_value_lists = []
         for fname in lexical_feature_names:
