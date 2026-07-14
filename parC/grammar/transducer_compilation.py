@@ -270,20 +270,81 @@ def get_marker_fst(marker: Marker) -> pynini.Fst:
     return compiled
 
 
-def get_trigger_fsa(trigger_tags: list[str] | tuple[str, ...], syms, sigma_star) -> pynini.Fst:
+def get_trigger_fsa(trigger_tags: list[str] | tuple[str, ...], syms, sigma_star, paradigm_name: str = "") -> pynini.Fst:
     """Helper to build a trigger acceptor that matches strings containing all trigger tags in order."""
     if not trigger_tags:
         return sigma_star
-    sorted_tags = sorted(list(trigger_tags))
+        
+    all_syms = [syms.find(i) for i in range(1, syms.num_symbols())]
+    
+    # Feature tags contain '=' (e.g. [person_number=2sg]), while boundary tags do not (e.g. [BOW], [EOW])
+    non_feature_symbols = [s for s in all_syms if not (s.startswith("[") and s.endswith("]") and "=" in s)]
+    non_feature_fsa = pynini.union(
+        *[pynini.accep(s, token_type=syms) for s in non_feature_symbols if s]
+    ).star.optimize()
+    
+    # If we have the paradigm name, we can build the rigid-ordered options FST
+    if paradigm_name:
+        from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
+        paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+        part_of_speech = paradigm_data.get("part_of_speech")
+        
+        lexical_feature_names = []
+        inflectional_feature_names = []
+        if part_of_speech:
+            pos_data = get_yaml_data_safe(yaml_basename=part_of_speech, kind="PartOfSpeech")
+            lexical_feature_names = pos_data.get("lexical_features", [])
+            inflectional_feature_names = sorted(pos_data.get("features", []))
+            
+        feature_names_order = lexical_feature_names + inflectional_feature_names
+        feature_map = get_feature_map()
+        
+        suffix_parts = []
+        trigger_tags_set = set(trigger_tags)
+        
+        for fname in feature_names_order:
+            if fname not in feature_map:
+                continue
+            # Get possible tags for this feature
+            val_tags = [f"[{fname}={v}]" for v in feature_map[fname]]
+            
+            # Check if any tag for this feature is in trigger_tags
+            active_trigger_val = next((t for t in val_tags if t in trigger_tags_set), None)
+            if active_trigger_val is not None:
+                # Feature is active in trigger; it MUST match the exact triggered value
+                suffix_parts.append(pynini.accep(active_trigger_val, token_type=syms))
+            else:
+                # Feature is not active in trigger; it is optional
+                val_fsa = pynini.union(
+                    *[pynini.accep(t, token_type=syms) for t in val_tags]
+                )
+                opt_fsa = pynini.union(
+                    pynini.accep("", token_type=syms),
+                    val_fsa
+                )
+                suffix_parts.append(opt_fsa)
+                
+        if suffix_parts:
+            feature_suffix_fsa = suffix_parts[0]
+            for part in suffix_parts[1:]:
+                feature_suffix_fsa = pynini.concat(feature_suffix_fsa, part)
+            return pynini.concat(non_feature_fsa, feature_suffix_fsa).optimize()
+            
+    # Fallback to general feature tags star if paradigm name is not provided
+    feature_symbols = [s for s in all_syms if s.startswith("[") and s.endswith("]") and "=" in s]
+    feature_tags_fsa_star = pynini.union(
+        *[pynini.accep(s, token_type=syms) for s in feature_symbols if s]
+    ).star.optimize()
+    
     parts = []
-    for tag in sorted_tags:
+    for tag in trigger_tags:
         parts.append(pynini.accep(tag, token_type=syms))
     
     seq = parts[0]
     for part in parts[1:]:
         seq = pynini.concat(seq, part)
         
-    return pynini.concat(sigma_star, pynini.concat(seq, sigma_star)).optimize()
+    return pynini.concat(non_feature_fsa, pynini.concat(feature_tags_fsa_star, pynini.concat(seq, feature_tags_fsa_star))).optimize()
 
 
 def compile_gated_marker(marker: Marker, trigger_tags: list[str] | tuple[str, ...]) -> pynini.Fst:
