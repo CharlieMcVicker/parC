@@ -350,6 +350,9 @@ def observed_cache(directories: list[str]):
                     import parC.pynini_graph
                     parC.pynini_graph._GRAPH_DEPS = None
                     logger.debug("Cleared pynini_graph memory cache and graph deps due to file changes.")
+                    # Also clear the symbol table cache to prevent stale symbols
+                    from parC.grammar.acceptor_compilation import get_symbol_table
+                    get_symbol_table.cache_clear()
                 except ImportError:
                     pass
 

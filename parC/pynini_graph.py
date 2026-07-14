@@ -59,15 +59,22 @@ def compile_graph_dynamic_dag(root: "GraphNode", max_workers: int = None) -> pyn
     """
     # 1. Collect all unique nodes in the DAG
     unique_nodes = {}
+    node_counts = {}
 
     def collect(node: GraphNode):
         key = node.cache_key
         if key not in unique_nodes:
             unique_nodes[key] = node
+            node_counts[key] = 1
             for child in node.children:
                 collect(child)
+        else:
+            node_counts[key] += 1
 
     collect(root)
+    # json.dump(node_counts, open(root.cache_key + "-counts.json", "w+"))
+    for node, count in node_counts.items():
+        unique_nodes[node].set_count(count)
 
     # 2. Build dependency counts and parent-notification map
     uncompiled_deps = {}  # cache_key -> count of uncompiled children
@@ -80,13 +87,17 @@ def compile_graph_dynamic_dag(root: "GraphNode", max_workers: int = None) -> pyn
         uncompiled_children = []
         for child in node.children:
             child_compiled = False
-            if child._compiled_fst is not None:
+            if child.num_states is not None:
                 child_compiled = True
             else:
                 with _MEM_CACHE_LOCK:
                     if child.cache_key in _FST_MEM_CACHE:
                         child_compiled = True
-            if not child_compiled:
+            if (
+                not child_compiled
+                and child.name is not None
+                and node_counts[child.cache_key] > 1
+            ):
                 uncompiled_children.append(child)
 
         uncompiled_deps[key] = len(uncompiled_children)
@@ -126,7 +137,7 @@ def compile_graph_dynamic_dag(root: "GraphNode", max_workers: int = None) -> pyn
             initial_nodes = []
             for key, node in unique_nodes.items():
                 node_compiled = False
-                if node._compiled_fst is not None:
+                if node.num_states is not None:
                     node_compiled = True
                 else:
                     with _MEM_CACHE_LOCK:
@@ -156,6 +167,7 @@ class GraphNode:
         params: dict = None,
         config_dep: dict = None,
         name: str = None,
+        compiled_fst: _real_pynini.Fst = None,
     ):
         self.op = op
         self.children = [
@@ -163,8 +175,11 @@ class GraphNode:
         ]
         self.params = params or {}
         self.config_dep = config_dep or {}
-        self._compiled_fst = None
+        # self._compiled_fst = None
         self.name = name
+        self.count = 0
+        self.num_states = None
+        self.compiled_fst = compiled_fst
 
         # Calculate SHA-256 of the node's op, parameters, config dependencies, and children's keys
         hasher = hashlib.sha256()
@@ -184,16 +199,17 @@ class GraphNode:
 
         self.cache_key = hasher.hexdigest()
 
-    def num_states(self) -> int:
-        if self._compiled_fst is None:
-            self.compile()
-        return self._compiled_fst.num_states()
+    def set_num_states(self, num_states: int):
+        self.num_states = num_states
 
     def __getattr__(self, name):
         # Delegate any unhandled attribute/method to the compiled FST
-        if self._compiled_fst is None:
-            self.compile()
-        return getattr(self._compiled_fst, name)
+        # if self._compiled_fst is None:
+        # self.compile()
+        # return getattr(self._compiled_fst, name)
+        raise AttributeError(
+            f"No property {name} on GraphNode - did you mean to compile?"
+        )
 
     @classmethod
     def constant(cls, val):
@@ -213,9 +229,11 @@ class GraphNode:
                     fst_sha = hashlib.sha256(fst_bytes).hexdigest()
                     _FST_OBJECT_HASH_CACHE[fst_id] = fst_sha
             node = GraphNode(
-                op="constant_fst", children=[], params={"fst_sha": fst_sha}
+                op="constant_fst",
+                children=[],
+                params={"fst_sha": fst_sha},
+                compiled_fst=val,
             )
-            node._compiled_fst = val
             return node
         return GraphNode(op="constant_val", children=[], params={"val": val})
 
@@ -243,49 +261,54 @@ class GraphNode:
         if parallel:
             return compile_graph_dynamic_dag(self, max_workers=max_workers)
 
-        if self._compiled_fst is not None:
-            return self._compiled_fst
+        if self.compiled_fst is not None:
+            return self.compiled_fst
 
         cache_key = self.cache_key
         with _MEM_CACHE_LOCK:
             if cache_key in _FST_MEM_CACHE:
-                self._compiled_fst = _FST_MEM_CACHE[cache_key]
-                return self._compiled_fst
+                fst = _FST_MEM_CACHE[cache_key]
+                self.set_num_states(fst.num_states())
+                return _FST_MEM_CACHE[cache_key]
 
         node_lock = get_node_lock(cache_key)
         with node_lock:
-            if self._compiled_fst is not None:
-                return self._compiled_fst
+            if self.compiled_fst is not None:
+                return self.compiled_fst
 
             with _MEM_CACHE_LOCK:
                 if cache_key in _FST_MEM_CACHE:
-                    self._compiled_fst = _FST_MEM_CACHE[cache_key]
-                    return self._compiled_fst
+                    fst = _FST_MEM_CACHE[cache_key]
+                    self.set_num_states(fst.num_states())
+                    return fst
 
             yaml_dir = get_yaml_dir()
             cache_dir = os.path.join(yaml_dir, ".cache")
-            os.makedirs(cache_dir, exist_ok=True)
+            cache_to_disk = self.name or self.count > 1
 
-            cache_path = os.path.join(cache_dir, f"{cache_key}.fst")
+            if cache_to_disk:
+                os.makedirs(cache_dir, exist_ok=True)
 
-            # 1. Try reading from cache
-            if os.path.exists(cache_path):
-                start_time = time.perf_counter()
-                try:
-                    compiled_fst = _real_pynini.Fst.read(cache_path)
-                    duration = time.perf_counter() - start_time
-                    logger.debug(
-                        f"FST Cache Hit: {self} loaded in {duration:.4f}s (key: {cache_key})"
-                    )
-                    with _MEM_CACHE_LOCK:
-                        self._compiled_fst = compiled_fst
-                        if compiled_fst.num_states() <= MAX_STATES_FOR_MEM_CACHE:
-                            _FST_MEM_CACHE[cache_key] = compiled_fst
-                    return self._compiled_fst
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to read cached FST {cache_path}: {e}. Recompiling..."
-                    )
+                cache_path = os.path.join(cache_dir, f"{cache_key}.fst")
+
+                # 1. Try reading from cache
+                if os.path.exists(cache_path):
+                    start_time = time.perf_counter()
+                    try:
+                        compiled_fst = _real_pynini.Fst.read(cache_path)
+                        duration = time.perf_counter() - start_time
+                        logger.debug(
+                            f"FST Cache Hit: {self} loaded in {duration:.4f}s (key: {cache_key})"
+                        )
+                        with _MEM_CACHE_LOCK:
+                            if compiled_fst.num_states() <= MAX_STATES_FOR_MEM_CACHE:
+                                _FST_MEM_CACHE[cache_key] = compiled_fst
+                        self.set_num_states(compiled_fst.num_states())
+                        return compiled_fst
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to read cached FST {cache_path}: {e}. Recompiling..."
+                        )
 
             # 2. Compile children
             compiled_children = [child.compile() for child in self.children]
@@ -296,11 +319,12 @@ class GraphNode:
             duration = time.perf_counter() - start_time
             logger.debug(f"FST Compiled: {self} in {duration:.4f}s (key: {cache_key})")
 
-            # 4. Save to disk cache
-            try:
-                fst.write(cache_path)
-            except Exception as e:
-                logger.warning(f"Failed to cache FST to {cache_path}: {e}")
+            if cache_to_disk:
+                # 4. Save to disk cache
+                try:
+                    fst.write(cache_path)
+                except Exception as e:
+                    logger.warning(f"Failed to cache FST to {cache_path}: {e}")
 
             # 5. Save graph dependencies metadata
             try:
@@ -317,7 +341,8 @@ class GraphNode:
             except Exception as e:
                 logger.warning(f"Failed to update graph dependencies: {e}")
 
-            self._compiled_fst = fst
+            self.num_states = fst.num_states()
+            # self._compiled_fst = fst
             with _MEM_CACHE_LOCK:
                 if fst.num_states() <= MAX_STATES_FOR_MEM_CACHE:
                     _FST_MEM_CACHE[cache_key] = fst
@@ -431,6 +456,9 @@ class GraphNode:
     def set_name(self, name: str) -> "GraphNode":
         self.name = name
         return self
+
+    def set_count(self, count: int):
+        self.count = count
 
     def optimize(self):
         return GraphNode(op="optimize", children=[self])
@@ -622,8 +650,8 @@ def _generate_mermaid_code(node: GraphNode, visited=None) -> str:
         label = f"<b>{node.op.upper()}</b>"
 
     state_text = (
-        f"states: {node.num_states()}"
-        if node._compiled_fst is not None
+        f"states: {node.num_states}"
+        if node.num_states is not None
         else "pending compile"
     )
     label += f"<br><font size=2 color=#94a3b8>{state_text}</font>"

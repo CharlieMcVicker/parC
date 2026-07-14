@@ -28,6 +28,7 @@ FeatureComboType = set[tuple[str, str]]
 
 _markers_for_paradigm_cache = {}
 
+
 def get_markers_for_paradigm(
     feature_values: FeatureComboType | dict[str, str],
     paradigm_name: str,
@@ -39,8 +40,16 @@ def get_markers_for_paradigm(
     Get all markers for a requested feature set for a given paradigm.
     Resolves principal_part markers into StringMapMarker using the paradigm's lexicon.
     """
-    fv_key = frozenset(feature_values.items()) if isinstance(feature_values, (dict, frozendict)) else frozenset(feature_values)
-    lex_key = frozenset(lexical_features.items()) if isinstance(lexical_features, (dict, frozendict)) else (frozenset(lexical_features) if lexical_features else frozenset())
+    fv_key = (
+        frozenset(feature_values.items())
+        if isinstance(feature_values, (dict, frozendict))
+        else frozenset(feature_values)
+    )
+    lex_key = (
+        frozenset(lexical_features.items())
+        if isinstance(lexical_features, (dict, frozendict))
+        else (frozenset(lexical_features) if lexical_features else frozenset())
+    )
     cache_key = (fv_key, paradigm_name, include_features, root, lex_key)
     if cache_key in _markers_for_paradigm_cache:
         return list(_markers_for_paradigm_cache[cache_key])

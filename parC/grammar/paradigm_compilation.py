@@ -218,25 +218,44 @@ class ParadigmGrammar:
         """Inflects an input FSA sequentially on-the-fly, avoiding pre-composing the two main FSTs."""
         res = pynini.compose(input_fsa, self.fst_1).optimize()
         res = pynini.compose(res, self.fst_2).optimize()
-        discharged_dropper = get_discharged_dropper_fst()
-        if discharged_dropper.num_states() > 0:
+        discharged_dropper = get_discharged_dropper_fst().set_name("discharged dropper")
+        discharged_dropper.compile()
+        if discharged_dropper.num_states > 0:
             res = pynini.compose(res, discharged_dropper).optimize()
-        return res
+        return res.compile()
 
     def parse(self, form_fsa: pynini.Fst, cascade_domain: pynini.Fst) -> pynini.Fst:
         """Parses a form FSA sequentially on-the-fly, avoiding pre-composing the two main FSTs."""
-        optional_discharged_dropper = get_optional_discharged_dropper_fst()
-        if optional_discharged_dropper.num_states() > 0:
+        logger.info("PARSE START")
+
+        logger.info(f"INPUT: {form_fsa.compile().num_states()}")
+
+        optional_discharged_dropper = get_optional_discharged_dropper_fst().set_name(
+            "optional_discharged_dropper"
+        )
+        optional_discharged_dropper.compile()
+        if optional_discharged_dropper.num_states > 0:
+            logger.info("optional discharged dropper used")
             res = pynini.compose(
                 form_fsa, optional_discharged_dropper.invert()
             ).optimize()
         else:
+            logger.info("optional discharged dropper skipped")
             res = form_fsa
 
+        logger.info(
+            f"RECHARGED: {res.compile().num_states()}",
+        )
+
         res = pynini.compose(res, self.optimized_parser_2).optimize()
+        logger.info(
+            f"PARSED_TO_LABELS: {res.compile().num_states()}",
+        )
         res = pynini.compose(res, self.fst_1.invert()).optimize()
+        logger.info(f"OUTPUT: {res.compile().num_states()}")
         res = pynini.compose(res, cascade_domain).optimize()
-        return res
+        logger.info(f"CASCADED: {res.compile().num_states()}")
+        return res.compile()
 
 
 @observed_cache([get_yaml_dir()])
@@ -252,28 +271,25 @@ def compile_paradigm_grammar(
     - FST 2 (Realization Chain)
     - Optimized Parser 2 (Inverted Realization)
     """
-    from parC.grammar.op_tags import get_op_tag
+    logger.info(f"Building graph for paradigm '{paradigm_name}'")
 
+    logger.info(f"Building feature exponence graph for '{paradigm_name}'")
     # 1. FST 1 (Exponence)
     fst_1 = get_label_to_marker_fst(
         paradigm_name,
         infer_lexical_features=infer_lexical_features,
         lexical_features=lexical_features,
-    )
-    if hasattr(fst_1, "set_name"):
-        fst_1.set_name("FST_1_Exponence")
-    else:
-        fst_1.name = "FST_1_Exponence"
+    ).set_name("FST_1_Exponence")
 
+    logger.info(
+        f"Building feature exponence output projection filter for '{paradigm_name}'"
+    )
     # 2. Constraint Filter
     filter_constraint = (
         pynini.project(fst_1, project_type="output").determinize().minimize()
-    )
-    if hasattr(filter_constraint, "set_name"):
-        filter_constraint.set_name("FST_1_Constraint_Filter")
-    else:
-        filter_constraint.name = "FST_1_Constraint_Filter"
+    ).set_name("FST_1_Constraint_Filter")
 
+    logger.info(f"Building phonological realization chain for '{paradigm_name}'")
     # 3. FST 2 (Realization Chain)
     paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
     if paradigm_data is None:
@@ -296,39 +312,46 @@ def compile_paradigm_grammar(
     execution_stages.extend(other_stages)
 
     stages_fsts = []
-    for stage in execution_stages:
-        stage_realization = get_stage_realization_fst(paradigm_name, stage)
-        if hasattr(stage_realization, "set_name"):
-            stage_realization.set_name(f"FST_2_Stage_{stage}")
-        else:
-            stage_realization.name = f"FST_2_Stage_{stage}"
+    for stage_no, stage in enumerate(execution_stages):
+
+        logger.info(
+            f"\tBuilding stage realization step for '{paradigm_name}/{stage}' ({stage_no+1}/{len(execution_stages)})"
+        )
+        stage_realization = (
+            get_stage_realization_fst(paradigm_name, stage)
+            .set_name(f"FST_2_Stage_{stage}")
+            .optimize()
+            .set_name(f"FST_2_Stage_{stage}_optimized")
+        )
         stages_fsts.append(stage_realization)
 
-    final_filter = get_final_surface_filter_fst(paradigm_name)
-    if hasattr(final_filter, "set_name"):
-        final_filter.set_name("FST_2_Surface_Filter")
-    else:
-        final_filter.name = "FST_2_Surface_Filter"
+    logger.info(f"Building surface filter for '{paradigm_name}'")
+    final_filter = get_final_surface_filter_fst(paradigm_name).set_name(
+        "FST_2_Surface_Filter"
+    )
 
+    logger.info(f"Composing phases into realization chain for '{paradigm_name}'")
     if stages_fsts:
         fst_2 = stages_fsts[0]
-        for sfst in stages_fsts[1:]:
-            fst_2 = pynini.compose(fst_2, sfst)
+        for sfst_no, sfst in enumerate(stages_fsts[1:]):
+            fst_2 = (
+                pynini.compose(fst_2, sfst)
+                .optimize()
+                .set_name(f"{paradigm_name}_partial_realization_chain_{sfst_no}")
+            )
         fst_2 = pynini.compose(fst_2, final_filter)
     else:
         fst_2 = final_filter
 
-    if hasattr(fst_2, "set_name"):
-        fst_2.set_name("FST_2_Realization_Chain")
-    else:
-        fst_2.name = "FST_2_Realization_Chain"
+    fst_2 = fst_2.optimize().set_name("FST_2_Realization_Chain")
 
     # 4. Optimized Parser 2
-    optimized_parser_2 = pynini.compose(fst_2.invert(), filter_constraint).optimize()
-    if hasattr(optimized_parser_2, "set_name"):
-        optimized_parser_2.set_name("Optimized_Parser_2")
-    else:
-        optimized_parser_2.name = "Optimized_Parser_2"
+    logger.info(f"Composing parser for '{paradigm_name}'")
+    optimized_parser_2 = (
+        pynini.compose(fst_2.invert(), filter_constraint)
+        .optimize()
+        .set_name("Optimized_Parser_2")
+    )
 
     return ParadigmGrammar(
         fst_1=fst_1,
@@ -521,8 +544,9 @@ def build_cascade_domain(
             all_cell_features = list(feature_values) + list(lexical_combo)
             constrained_root_fsa = _apply_feature_acceptor_constraints(
                 root_fsa, all_cell_features
-            )
-            if constrained_root_fsa.num_states() == 0:
+            ).set_name("constrained_root_fsa")
+
+            if constrained_root_fsa.compile().num_states() == 0:
                 continue
 
             inflect_input = constrained_root_fsa
@@ -597,7 +621,7 @@ def build_lexicon_cascade_domain(paradigm_name: str) -> pynini.Fst:
             constrained_root_fsa = _apply_feature_acceptor_constraints(
                 root_fsa, all_cell_features
             )
-            if constrained_root_fsa.num_states() == 0:
+            if constrained_root_fsa.num_states == 0:
                 continue
 
             try:
@@ -629,8 +653,8 @@ def build_search_lexicon_and_left_factor_for_paradigm(
     # 3. Form lattice is: cascade_domain @ fst_1 @ fst_2 projected to output
     form_lattice = pynini.compose(cascade_domain, grammar.fst_1).optimize()
     form_lattice = pynini.compose(form_lattice, grammar.fst_2).optimize()
-    discharged_dropper = get_discharged_dropper_fst()
-    if discharged_dropper.num_states() > 0:
+    discharged_dropper = get_discharged_dropper_fst().set_name("discharged_dropper")
+    if discharged_dropper.compile().num_states() > 0:
         form_lattice = pynini.compose(form_lattice, discharged_dropper).optimize()
     form_lattice = pynini.project(form_lattice, project_type="output").optimize()
 
@@ -649,7 +673,7 @@ def build_search_lexicon_and_left_factor_for_paradigm(
         sigma,
         pynini.accep(R.substitute, weight=EDIT_COST / 2, token_type=syms),
     )
-    edit_fst = pynini.union(insert_fst, delete_fst, substitute_fst).optimize()
+    edit_fst = pynini.union(insert_fst, delete_fst, substitute_fst).optimize().compile()
 
     left_factor = sigma_star.copy()
     for _ in range(EDIT_BOUND):
@@ -658,7 +682,7 @@ def build_search_lexicon_and_left_factor_for_paradigm(
         )
     left_factor.optimize()
 
-    right_factor = pynini.invert(left_factor)
+    right_factor = pynini.invert(left_factor).compile()
     insert_label = syms.find(R.insert)
     delete_label = syms.find(R.delete)
     right_factor = right_factor.relabel_pairs(

@@ -25,7 +25,7 @@ def test_suffix():
 
     root = word_fsa("rama")
     result = pynini.compose(root, fst)
-    assert result.num_states() > 0
+    assert result.compile().num_states() > 0
     result_strings = fsm_strings(result, strip_all_tags=True)
     assert "rama-sufijo" in result_strings
 
@@ -37,7 +37,7 @@ def test_prefix():
 
     root = word_fsa("historia")
     result = pynini.compose(root, fst)
-    assert result.num_states() > 0
+    assert result.compile().num_states() > 0
     result_strings = fsm_strings(result, strip_all_tags=True)
     assert "antes-historia" in result_strings
 
@@ -50,7 +50,7 @@ def test_rule():
 
     root = word_fsa("pod")
     result = pynini.compose(root, fst)
-    assert result.num_states() > 0
+    assert result.compile().num_states() > 0
     result_strings = fsm_strings(result, strip_all_tags=True)
     assert "pued" in result_strings
 
@@ -88,7 +88,7 @@ def test_2sg_a_class():
     root = roots[0]
     root_fsa = word_fsa(root)
     result = pynini.compose(root_fsa, fst)
-    assert result.num_states() > 0
+    assert result.compile().num_states() > 0
     result_strings = fsm_strings(result, strip_all_tags=True)
     expected_form = "habl-as"
     assert expected_form in result_strings
@@ -220,9 +220,17 @@ def test_contingent_lexical_submapping():
         assert f"{root2}{val2_2}" in res_root2_2
 
         # Inverted open-root parser tests for verb_class_test using grammar.parse
-        from parC.grammar.paradigm_compilation import compile_paradigm_grammar, build_cascade_domain
-        grammar = compile_paradigm_grammar("verb_class_test", infer_lexical_features=True)
-        cascade_domain = build_cascade_domain("verb_class_test", "<Phone>*", infer_lexical_features=True)
+        from parC.grammar.paradigm_compilation import (
+            compile_paradigm_grammar,
+            build_cascade_domain,
+        )
+
+        grammar = compile_paradigm_grammar(
+            "verb_class_test", infer_lexical_features=True
+        )
+        cascade_domain = build_cascade_domain(
+            "verb_class_test", "<Phone>*", infer_lexical_features=True
+        )
 
         # Parse f"{root1}{val1_1}" back to root1 with feature: val_key1
         fsa_1 = word_fsa(f"{root1}{val1_1}")
@@ -270,7 +278,12 @@ def test_build_inflect_graph_for_root_regex_with_lexical_features():
     from parC.constants import get_yaml_dir
     from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
     from parC.grammar.paradigm_compilation import compile_paradigm_grammar
-    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings, fsa, get_symbol_table
+    from parC.grammar.acceptor_compilation import (
+        word_fsa,
+        fsm_strings,
+        fsa,
+        get_symbol_table,
+    )
     from parC.fst_utils import stringify_features
     import yaml
     import pynini
@@ -374,7 +387,10 @@ def test_build_inflect_graph_for_root_regex_with_lexical_features():
 def test_build_inflect_graph_for_root_regex_lexical_inference():
     from parC.constants import get_yaml_dir
     from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
-    from parC.grammar.paradigm_compilation import compile_paradigm_grammar, build_cascade_domain
+    from parC.grammar.paradigm_compilation import (
+        compile_paradigm_grammar,
+        build_cascade_domain,
+    )
     from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
     import yaml
     import pynini
@@ -457,6 +473,13 @@ def test_build_inflect_graph_for_root_regex_lexical_inference():
 
         # Let's parse the surface form cant-o_a
         surface_fsa = word_fsa(f"cant{val1_1}")
+        print(
+            "TEST VALUE",
+            surface_fsa,
+            surface_fsa.num_states,
+            surface_fsa.compile().num_states(),
+            surface_fsa.num_states,
+        )
         parse_lattice = grammar.parse(surface_fsa, cascade_domain)
         parse_strs = fsm_strings(parse_lattice)
 
@@ -475,7 +498,11 @@ def test_build_inflect_graph_for_root_regex_lexical_inference():
 
 def test_get_label_to_marker_fst():
     from parC.grammar.paradigm_compilation import get_label_to_marker_fst
-    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings, get_symbol_table
+    from parC.grammar.acceptor_compilation import (
+        word_fsa,
+        fsm_strings,
+        get_symbol_table,
+    )
     import pynini
 
     # 1. Compile the label-to-marker fst (exponence transducer) for verb_a_stem
@@ -486,12 +513,18 @@ def test_get_label_to_marker_fst():
     # should map to habl followed by its operational tag
     syms = get_symbol_table()
     input_fsa = word_fsa("habl")
-    input_fsa = pynini.concat(input_fsa, pynini.accep("[mood=indicative]", token_type=syms))
-    input_fsa = pynini.concat(input_fsa, pynini.accep("[person_number=2sg]", token_type=syms))
-    input_fsa = pynini.concat(input_fsa, pynini.accep("[tense=present]", token_type=syms))
+    input_fsa = pynini.concat(
+        input_fsa, pynini.accep("[mood=indicative]", token_type=syms)
+    )
+    input_fsa = pynini.concat(
+        input_fsa, pynini.accep("[person_number=2sg]", token_type=syms)
+    )
+    input_fsa = pynini.concat(
+        input_fsa, pynini.accep("[tense=present]", token_type=syms)
+    )
 
     result = pynini.compose(input_fsa, exponence_fst)
-    assert result.num_states() > 0
+    assert result.compile().num_states() > 0
     result_strs = fsm_strings(result, strip_all_tags=False)
     assert len(result_strs) == 1
     assert "<exp.suffix=-as>" in result_strs[0]
@@ -499,7 +532,11 @@ def test_get_label_to_marker_fst():
 
 def test_get_stage_realization_fst():
     from parC.grammar.paradigm_compilation import get_stage_realization_fst
-    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings, get_symbol_table
+    from parC.grammar.acceptor_compilation import (
+        word_fsa,
+        fsm_strings,
+        get_symbol_table,
+    )
     import pynini
 
     # 1. Compile the stage-by-stage realization transducer for verb_a_stem, stage None
@@ -509,10 +546,12 @@ def test_get_stage_realization_fst():
     # 2. Let's test a mapping: habl[OP=suffix_as] should map to habl-as
     syms = get_symbol_table()
     input_fsa = word_fsa("habl")
-    input_fsa = pynini.concat(input_fsa, pynini.accep("<exp.suffix=-as>", token_type=syms))
+    input_fsa = pynini.concat(
+        input_fsa, pynini.accep("<exp.suffix=-as>", token_type=syms)
+    )
 
     result = pynini.compose(input_fsa, stage_fst)
-    assert result.num_states() > 0
+    assert result.compile().num_states() > 0
     result_strs = fsm_strings(result, strip_all_tags=True)
     # The operational tag should be deleted/rewritten, and suffix -as appended
     assert "habl-as" in result_strs
@@ -520,7 +559,7 @@ def test_get_stage_realization_fst():
     # 3. Test non-flagged identity mapping: a string with no active stage tags should pass through unchanged
     input_no_tag = word_fsa("habl")
     result_no_tag = pynini.compose(input_no_tag, stage_fst)
-    assert result_no_tag.num_states() > 0
+    assert result_no_tag.compile().num_states() > 0
     result_no_tag_strs = fsm_strings(result_no_tag, strip_all_tags=True)
     assert "habl" in result_no_tag_strs
 
@@ -534,19 +573,23 @@ def test_get_final_surface_filter_fst():
     assert isinstance(filter_fst, pynini.Fst)
 
     # 2. Check that valid strings are accepted
-    assert pynini.compose(word_fsa("habl-as"), filter_fst).num_states() > 0
-    assert pynini.compose(word_fsa("cant-as"), filter_fst).num_states() > 0
+    assert pynini.compose(word_fsa("habl-as"), filter_fst).compile().num_states() > 0
+    assert pynini.compose(word_fsa("cant-as"), filter_fst).compile().num_states() > 0
 
     # 3. Check that strings with remaining tags are rejected
     syms = get_symbol_table()
-    
+
     # habl-as<exp.suffix=-as>
-    tagged_1 = pynini.concat(word_fsa("habl-as"), pynini.accep("<exp.suffix=-as>", token_type=syms))
-    assert pynini.compose(tagged_1, filter_fst).num_states() == 0
+    tagged_1 = pynini.concat(
+        word_fsa("habl-as"), pynini.accep("<exp.suffix=-as>", token_type=syms)
+    )
+    assert pynini.compose(tagged_1, filter_fst).compile().num_states() == 0
 
     # habl[mood=indicative]
-    tagged_2 = pynini.concat(word_fsa("habl"), pynini.accep("[mood=indicative]", token_type=syms))
-    assert pynini.compose(tagged_2, filter_fst).num_states() == 0
+    tagged_2 = pynini.concat(
+        word_fsa("habl"), pynini.accep("[mood=indicative]", token_type=syms)
+    )
+    assert pynini.compose(tagged_2, filter_fst).compile().num_states() == 0
 
 
 def test_build_inflect_graph_for_root_regex_verb_a_stem():
@@ -559,20 +602,27 @@ def test_build_inflect_graph_for_root_regex_verb_a_stem():
 
 
 def test_parse_with_inverted_open_root_graph():
-    from parC.grammar.paradigm_compilation import compile_paradigm_grammar, build_cascade_domain
+    from parC.grammar.paradigm_compilation import (
+        compile_paradigm_grammar,
+        build_cascade_domain,
+    )
     from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
-    import pynini
 
     # Compile grammar and build cascade domain for open root
     grammar = compile_paradigm_grammar("verb_a_stem", infer_lexical_features=True)
-    cascade_domain = build_cascade_domain("verb_a_stem", "<Phone>*", infer_lexical_features=True)
+    cascade_domain = build_cascade_domain(
+        "verb_a_stem", "<Phone>*", infer_lexical_features=True
+    )
 
     # Verify that "habl-as" parses back to "habl" with features [person_number=2sg][tense=present][mood=indicative]
     form_fsa_habl = word_fsa("habl-as")
     parse_lattice_habl = grammar.parse(form_fsa_habl, cascade_domain)
     parse_strs_habl = fsm_strings(parse_lattice_habl)
     assert any(
-        "habl" in s and "[person_number=2sg]" in s and "[tense=present]" in s and "[mood=indicative]" in s
+        "habl" in s
+        and "[person_number=2sg]" in s
+        and "[tense=present]" in s
+        and "[mood=indicative]" in s
         for s in parse_strs_habl
     )
 
@@ -581,19 +631,27 @@ def test_parse_with_inverted_open_root_graph():
     parse_lattice_cant = grammar.parse(form_fsa_cant, cascade_domain)
     parse_strs_cant = fsm_strings(parse_lattice_cant)
     assert any(
-        "cant" in s and "[person_number=2sg]" in s and "[tense=present]" in s and "[mood=indicative]" in s
+        "cant" in s
+        and "[person_number=2sg]" in s
+        and "[tense=present]" in s
+        and "[mood=indicative]" in s
         for s in parse_strs_cant
     )
 
 
 def test_parse_with_discharged_features():
-    from parC.grammar.paradigm_compilation import compile_paradigm_grammar, build_cascade_domain
+    from parC.grammar.paradigm_compilation import (
+        compile_paradigm_grammar,
+        build_cascade_domain,
+    )
     from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
     import pynini
 
     # Compile grammar and build cascade domain for open root
     grammar = compile_paradigm_grammar("verb_a_stem", infer_lexical_features=True)
-    cascade_domain = build_cascade_domain("verb_a_stem", "<Phone>*", infer_lexical_features=True)
+    cascade_domain = build_cascade_domain(
+        "verb_a_stem", "<Phone>*", infer_lexical_features=True
+    )
 
     # 2. Parse "habl-as" (indicative present 2sg) without restriction
     form_fsa = word_fsa("habl-as")
@@ -616,9 +674,14 @@ def test_parse_with_discharged_features():
     parse_lattice_invalid = grammar.parse(form_fsa_invalid, cascade_domain)
     parse_strs_invalid = fsm_strings(parse_lattice_invalid)
     assert len(parse_strs_invalid) == 0
+
+
 def test_feature_value_acceptors():
     from parC.constants import get_yaml_dir
-    from parC.grammar.paradigm_compilation import compile_paradigm_grammar, build_cascade_domain
+    from parC.grammar.paradigm_compilation import (
+        compile_paradigm_grammar,
+        build_cascade_domain,
+    )
     from parC.grammar.acceptor_compilation import get_feature_acceptor_fsts
     import yaml
 
@@ -633,7 +696,9 @@ def test_feature_value_acceptors():
 
     feature_file = os.path.join(features_dir, "acceptor_test_features.yaml")
     pos_file = os.path.join(pos_dir, "acceptor_test_pos.yaml")
-    markers_file = os.path.join(yaml_dir, "Exponence", "FeatureMarkers", "acceptor_test_markers.yaml")
+    markers_file = os.path.join(
+        yaml_dir, "Exponence", "FeatureMarkers", "acceptor_test_markers.yaml"
+    )
     paradigm_file = os.path.join(paradigm_dir, "acceptor_test_paradigm.yaml")
 
     feature_data = {
@@ -641,47 +706,32 @@ def test_feature_value_acceptors():
         "features": {
             "acceptor_prefix_class": [
                 "normal",
-                {
-                    "name": "e_stem",
-                    "acceptor": "e<Phone>*"
-                }
+                {"name": "e_stem", "acceptor": "e<Phone>*"},
             ],
-            "acceptor_person_number": ["1sg", "2sg"]
-        }
+            "acceptor_person_number": ["1sg", "2sg"],
+        },
     }
 
     pos_data = {
         "kind": "PartOfSpeech",
         "name": "acceptor_test_pos",
         "lexical_features": ["acceptor_prefix_class"],
-        "features": ["acceptor_person_number"]
+        "features": ["acceptor_person_number"],
     }
 
     markers_data = {
         "kind": "FeatureMarkers",
         "feature": "acceptor_person_number",
         "markers": {
-            "1sg": [
-                {
-                    "kind": "suffix",
-                    "value": "-test"
-                }
-            ],
-            "2sg": [
-                {
-                    "kind": "suffix",
-                    "value": "-test"
-                }
-            ]
-        }
+            "1sg": [{"kind": "suffix", "value": "-test"}],
+            "2sg": [{"kind": "suffix", "value": "-test"}],
+        },
     }
 
     paradigm_data = {
         "kind": "Paradigm",
         "part_of_speech": "$acceptor_test_pos",
-        "feature_markers": {
-            "acceptor_person_number": "$acceptor_test_markers"
-        }
+        "feature_markers": {"acceptor_person_number": "$acceptor_test_markers"},
     }
 
     with open(feature_file, "w", encoding="utf-8") as f:
@@ -697,7 +747,11 @@ def test_feature_value_acceptors():
     try:
         # Clear lru_cache and observed caches
         from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
-        from parC.grammar.acceptor_compilation import get_feature_acceptor_fsts, get_pattern_fsts
+        from parC.grammar.acceptor_compilation import (
+            get_feature_acceptor_fsts,
+            get_pattern_fsts,
+        )
+
         _get_yaml_data_safe_cached.cache_clear()
         get_feature_acceptor_fsts.cache_clear()
         get_pattern_fsts.cache_clear()
@@ -711,10 +765,12 @@ def test_feature_value_acceptors():
         grammar_valid = compile_paradigm_grammar(
             "acceptor_test_paradigm",
             infer_lexical_features=False,
-            lexical_features=(("acceptor_prefix_class", "e_stem"),)
+            lexical_features=(("acceptor_prefix_class", "e_stem"),),
         )
         cascade_domain_valid = build_cascade_domain(
-            "acceptor_test_paradigm", "evla", lexical_features={"acceptor_prefix_class": "e_stem"}
+            "acceptor_test_paradigm",
+            "evla",
+            lexical_features={"acceptor_prefix_class": "e_stem"},
         )
         inf_valid = grammar_valid.inflect(cascade_domain_valid)
         assert inf_valid.num_states() > 0
@@ -723,10 +779,12 @@ def test_feature_value_acceptors():
         grammar_invalid = compile_paradigm_grammar(
             "acceptor_test_paradigm",
             infer_lexical_features=False,
-            lexical_features=(("acceptor_prefix_class", "e_stem"),)
+            lexical_features=(("acceptor_prefix_class", "e_stem"),),
         )
         cascade_domain_invalid = build_cascade_domain(
-            "acceptor_test_paradigm", "avla", lexical_features={"acceptor_prefix_class": "e_stem"}
+            "acceptor_test_paradigm",
+            "avla",
+            lexical_features={"acceptor_prefix_class": "e_stem"},
         )
         inf_invalid = grammar_invalid.inflect(cascade_domain_invalid)
         # Should be filtered out, meaning empty FST / 0 states
@@ -734,7 +792,9 @@ def test_feature_value_acceptors():
 
     finally:
         # Clean up temporary test files
-        csv_file = os.path.join(yaml_dir, "Lexicon", "Wordlists", "acceptor_test_pos.csv")
+        csv_file = os.path.join(
+            yaml_dir, "Lexicon", "Wordlists", "acceptor_test_pos.csv"
+        )
         for p in [feature_file, pos_file, markers_file, paradigm_file, csv_file]:
             if os.path.exists(p):
                 try:
@@ -742,8 +802,11 @@ def test_feature_value_acceptors():
                 except OSError:
                     pass
         from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
-        from parC.grammar.acceptor_compilation import get_feature_acceptor_fsts, get_pattern_fsts
+        from parC.grammar.acceptor_compilation import (
+            get_feature_acceptor_fsts,
+            get_pattern_fsts,
+        )
+
         _get_yaml_data_safe_cached.cache_clear()
         get_feature_acceptor_fsts.cache_clear()
         get_pattern_fsts.cache_clear()
-

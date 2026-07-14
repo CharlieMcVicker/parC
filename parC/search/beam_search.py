@@ -42,6 +42,7 @@ class WfsaCsr(NamedTuple):
         A `CSR` named tuple containing the CSR representation of the FST.
         """
         from parC.pynini_graph import GraphNode
+
         if isinstance(wfsa, GraphNode):
             wfsa = wfsa.compile()
 
@@ -50,7 +51,8 @@ class WfsaCsr(NamedTuple):
         wfsa = pynini.determinize(wfsa)
         wfsa = pynini.arcsort(wfsa)
 
-        n = wfsa.num_states()
+        wfsa.compile()
+        n = wfsa.num_states
 
         # store final states
         final = np.zeros(n, dtype=bool)
