@@ -11,9 +11,16 @@ PROJECT_ROOT = os.path.dirname(
 SCHEMA_DIR = os.path.join(PROJECT_ROOT, 'schemas')
 
 
+_dotenv_loaded = False
+
+
 def get_yaml_dir():
-    load_dotenv(os.path.join(PROJECT_ROOT, "parC.env"))
+    global _dotenv_loaded
+    if not _dotenv_loaded:
+        load_dotenv(os.path.join(PROJECT_ROOT, "parC.env"))
+        _dotenv_loaded = True
     return os.environ.get("YAML_DIR") or os.path.join(PROJECT_ROOT, "yaml", "spanish-example")
+
 
 
 def set_yaml_dir(path: str):
