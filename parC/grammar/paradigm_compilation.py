@@ -308,14 +308,30 @@ class ParadigmGrammar:
     def __iter__(self):
         return iter((self.fst_1, self.fst_2, self.filter_constraint, self.optimized_parser_2))
 
-    def build_inflect_graph(self, cascade_domain: pynini.Fst) -> pynini.Fst:
-        core_graph = pynini.compose(pynini.compose(cascade_domain, self.fst_1), self.fst_2).optimize()
+    def inflect(self, input_fsa: pynini.Fst) -> pynini.Fst:
+        """Inflects an input FSA sequentially on-the-fly, avoiding pre-composing the two main FSTs."""
+        res = pynini.compose(input_fsa, self.fst_1).optimize()
+        res = pynini.compose(res, self.fst_2).optimize()
         discharged_dropper = get_discharged_dropper_fst()
         if discharged_dropper.num_states() > 0:
-            res = pynini.compose(core_graph, discharged_dropper).optimize()
-        else:
-            res = core_graph.copy()
+            res = pynini.compose(res, discharged_dropper).optimize()
         return res
+
+    def parse(self, form_fsa: pynini.Fst, cascade_domain: pynini.Fst) -> pynini.Fst:
+        """Parses a form FSA sequentially on-the-fly, avoiding pre-composing the two main FSTs."""
+        optional_discharged_dropper = get_optional_discharged_dropper_fst()
+        if optional_discharged_dropper.num_states() > 0:
+            res = pynini.compose(form_fsa, optional_discharged_dropper.invert()).optimize()
+        else:
+            res = form_fsa
+
+        res = pynini.compose(res, self.optimized_parser_2).optimize()
+        res = pynini.compose(res, self.fst_1.invert()).optimize()
+        res = pynini.compose(res, cascade_domain).optimize()
+        return res
+
+    def build_inflect_graph(self, cascade_domain: pynini.Fst) -> pynini.Fst:
+        return self.inflect(cascade_domain)
 
     def build_parse_graph(self, cascade_domain: pynini.Fst) -> pynini.Fst:
         optional_discharged_dropper = get_optional_discharged_dropper_fst()
@@ -964,21 +980,12 @@ def parse(
     paradigm_data = get_yaml_data_safe(yaml_basename=name, kind=kind)
     lexicon_basename = paradigm_data.get("part_of_speech", "")
 
-    optional_discharged_dropper = get_optional_discharged_dropper_fst()
-    if optional_discharged_dropper.num_states() > 0:
-        res = pynini.compose(form_fsa, optional_discharged_dropper.invert()).optimize()
-    else:
-        res = form_fsa
-
-    res = pynini.compose(res, grammar.optimized_parser_2).optimize()
-    res = pynini.compose(res, grammar.fst_1.invert()).optimize()
-
     if open_ended:
         cascade_domain = build_cascade_domain(name, "<Phone>*", infer_lexical_features=True)
     else:
         cascade_domain = build_lexicon_cascade_domain(name)
 
-    parse_lattice = pynini.compose(res, cascade_domain).optimize()
+    parse_lattice = grammar.parse(form_fsa, cascade_domain)
     parse_strs = fsm_strings(parse_lattice)
     expected_features = get_features_for_paradigm(name)
     parses = []
@@ -1042,12 +1049,7 @@ def inflect(
     if feature_str:
         input_fsa = pynini.concat(input_fsa, fsa(feature_str))
 
-    output_lattice = pynini.compose(input_fsa, grammar.fst_1).optimize()
-    output_lattice = pynini.compose(output_lattice, grammar.fst_2).optimize()
-    discharged_dropper = get_discharged_dropper_fst()
-    if discharged_dropper.num_states() > 0:
-        output_lattice = pynini.compose(output_lattice, discharged_dropper).optimize()
-
+    output_lattice = grammar.inflect(input_fsa)
     output_lattice = pynini.project(output_lattice, project_type="output")
     surface_forms = fsm_strings(output_lattice, strip_all_tags=True)
 
