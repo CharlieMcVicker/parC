@@ -131,11 +131,6 @@ function renderFeatureSelectors(featuresList) {
     select.className = 'feature-select';
     select.dataset.feature = featName;
 
-    const defOpt = document.createElement('option');
-    defOpt.value = 'unmarked';
-    defOpt.textContent = 'unmarked';
-    select.appendChild(defOpt);
-
     values.forEach(v => {
       const opt = document.createElement('option');
       opt.value = v;

@@ -172,7 +172,7 @@ def test_contingent_lexical_submapping():
         for f in pos_feats:
             if f != feature:
                 fmap = get_feature_map()
-                feat_markers[f] = fmap[f][0] if f in fmap and fmap[f] else "unmarked"
+                feat_markers[f] = fmap[f][0] if f in fmap and fmap[f] else None
     else:
         pytest.skip("No recognized lexical features for testing")
         return
@@ -180,7 +180,7 @@ def test_contingent_lexical_submapping():
     fmap = get_feature_map()
     feat_vals = fmap.get(feature, ["1sg", "2sg"])
     val_key1 = feat_vals[0]
-    val_key2 = feat_vals[1] if len(feat_vals) > 1 else "unmarked"
+    val_key2 = feat_vals[1] if len(feat_vals) > 1 else feat_vals[0]
 
     contingent_data = {
         "kind": "ContingentFeatureMarkers",
@@ -304,7 +304,7 @@ def test_build_inflect_graph_for_root_regex_with_lexical_features():
         for f in pos_feats:
             if f != feature:
                 fmap = get_feature_map()
-                feat_markers[f] = fmap[f][0] if f in fmap and fmap[f] else "unmarked"
+                feat_markers[f] = fmap[f][0] if f in fmap and fmap[f] else None
     else:
         pytest.skip("No recognized lexical features for testing")
         return
@@ -406,7 +406,7 @@ def test_build_inflect_graph_for_root_regex_lexical_inference():
         for f in pos_feats:
             if f != feature:
                 fmap = get_feature_map()
-                feat_markers[f] = fmap[f][0] if f in fmap and fmap[f] else "unmarked"
+                feat_markers[f] = fmap[f][0] if f in fmap and fmap[f] else None
     else:
         pytest.skip("No recognized lexical features for testing")
         return

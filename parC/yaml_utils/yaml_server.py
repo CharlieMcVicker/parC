@@ -271,7 +271,7 @@ def get_feature_map() -> dict[str, tuple[str, ...]]:
                     names.append(item)
                 elif isinstance(item, dict):
                     names.append(item["name"])
-            features[feature_name] = tuple(names) + ("unmarked",)
+            features[feature_name] = tuple(names)
 
     return features
 
@@ -300,7 +300,6 @@ def get_feature_array() -> tuple[Feature]:
                             name=item["name"], acceptor=item.get("acceptor")
                         )
                     )
-            normalized_vals.append(FeatureValueDef(name="unmarked", acceptor=None))
             features.append(Feature(name=feature_name, values=tuple(normalized_vals)))
 
     return tuple(features)
