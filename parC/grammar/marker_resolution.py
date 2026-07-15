@@ -165,7 +165,7 @@ def get_sorted_markers_for_paradigm(paradigm_name: str) -> dict:
             if isinstance(curr, list):
                 resolved_list = []
                 contingent_feature_values = {
-                    (f, v) for f, v in path_features.items() if f not in lexical_feature_names
+                    (f, v) for f, v in path_features.items()
                 }
                 for m in curr:
                     pm = process_marker(m)
