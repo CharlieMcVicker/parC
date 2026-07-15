@@ -388,20 +388,29 @@ def build_inflect_graph_for_root_regex(
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
 
-    # Sort markers by stage
+    # Group markers by stage
+    from collections import defaultdict
+    stage_to_markers = defaultdict(list)
+    for marker in marker_to_combinations.keys():
+        stage = getattr(marker, "stage", None)
+        if stage is None:
+            stage = "unknown"
+        stage_to_markers[stage].append(marker)
+
+    # Order stages
     stage_order = list(paradigm_data.get("stage_order", []))
     if "principal_part" not in stage_order:
         stage_order.insert(0, "principal_part")
 
-    def get_marker_sort_key(m):
-        stage = getattr(m, "stage", None)
-        if stage in stage_order:
-            return stage_order.index(stage)
-        return len(stage_order)
-
-    sorted_markers = sorted(
-        list(marker_to_combinations.keys()), key=get_marker_sort_key
-    )
+    ordered_stages = []
+    if "principal_part" in stage_to_markers:
+        ordered_stages.append("principal_part")
+    for s in stage_order:
+        if s != "principal_part" and s in stage_to_markers:
+            ordered_stages.append(s)
+    for s in stage_to_markers:
+        if s not in ordered_stages:
+            ordered_stages.append(s)
 
     from parC.grammar.acceptor_compilation import get_special_fsas
 
@@ -417,42 +426,46 @@ def build_inflect_graph_for_root_regex(
     # Build tag domain (all valid tag sequences)
     tag_domain = pynini.union(*tag_seqs).optimize()
 
-    # Apply sequential composition cascade
+    # Apply sequential composition cascade by stage
     current_fst = cascade_domain
-    for marker in sorted_markers:
-        combo_tag_lists = marker_to_combinations[marker]
-
-        # Build trigger FST by unioning tag suffixes
-        suffix_fsas = []
-        for tags in combo_tag_lists:
-            parts = [tag_fsas[t] for t in tags]
-            if parts:
-                seq = parts[0]
-                for part in parts[1:]:
-                    seq = pynini.concat(seq, part)
-                suffix_fsas.append(seq)
-
-        if suffix_fsas:
-            trigger_tags = pynini.union(*suffix_fsas).optimize()
-            trigger_fsa = pynini.concat(sigma_star, trigger_tags).optimize()
-        else:
-            trigger_tags = pynini.accep("", token_type=syms)
-            trigger_fsa = sigma_star
+    for stage in ordered_stages:
+        markers = stage_to_markers[stage]
+        trigger_paths = []
+        all_stage_trigger_tags = []
 
         from parC.grammar.transducer_compilation import get_marker_fst
 
-        base_fst = get_marker_fst(marker)
+        for marker in markers:
+            combo_tag_lists = marker_to_combinations[marker]
 
-        # Build non-triggering FST using the static tag difference
-        non_trigger_tags = pynini.difference(tag_domain, trigger_tags).optimize()
+            # Build trigger FST by unioning tag suffixes
+            suffix_fsas = []
+            for tags in combo_tag_lists:
+                parts = [tag_fsas[t] for t in tags]
+                if parts:
+                    seq = parts[0]
+                    for part in parts[1:]:
+                        seq = pynini.concat(seq, part)
+                    suffix_fsas.append(seq)
+
+            if suffix_fsas:
+                marker_trigger_tags = pynini.union(*suffix_fsas).optimize()
+                marker_trigger_fsa = pynini.concat(sigma_star, marker_trigger_tags).optimize()
+            else:
+                marker_trigger_tags = pynini.accep("", token_type=syms)
+                marker_trigger_fsa = sigma_star
+
+            all_stage_trigger_tags.append(marker_trigger_tags)
+            base_fst = get_marker_fst(marker)
+            trigger_paths.append(pynini.compose(marker_trigger_fsa, base_fst))
+
+        stage_trigger_tags = pynini.union(*all_stage_trigger_tags).optimize()
+        non_trigger_tags = pynini.difference(tag_domain, stage_trigger_tags).optimize()
         non_trigger_fsa = pynini.concat(
             stems_domain_acceptor, non_trigger_tags
         ).optimize()
 
-        gated_fst = pynini.union(
-            pynini.compose(trigger_fsa, base_fst), non_trigger_fsa
-        ).optimize()
-
+        gated_fst = pynini.union(*(trigger_paths + [non_trigger_fsa])).optimize()
         current_fst = pynini.compose(current_fst, gated_fst).optimize()
 
     # Cleanup Tags
