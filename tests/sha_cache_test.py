@@ -73,3 +73,60 @@ def test_paradigm_recursive_keys():
     # The child dependencies of the paradigm should contain markers
     has_marker = any(k.startswith("Marker/") for k in meta["child_fst_dependencies"].keys())
     assert has_marker
+
+
+def test_open_parse_graph_and_subcomponent_caching():
+    from parC.grammar.paradigm_compilation import get_open_parse_graph, get_paradigm_cache_key
+    import pynini
+    
+    paradigm_name = "verb_a_stem"
+    cache_key = get_paradigm_cache_key(paradigm_name)
+    
+    # Clean up any existing cached files for this key to ensure we test building and caching
+    suffixes = ["_open_parse", "_open_inflect", "_open_input_acceptor", "_stage_cascade", "_stages"]
+    for suff in suffixes:
+        for p in [os.path.join(CACHE_DIR, f"{cache_key}{suff}.fst"),
+                  os.path.join(CACHE_DIR, f"{cache_key}{suff}.meta")]:
+            if os.path.exists(p):
+                os.remove(p)
+        for i in range(20):
+            p = os.path.join(CACHE_DIR, f"{cache_key}_stages_seq_{i}.fst")
+            if os.path.exists(p):
+                os.remove(p)
+                
+    # Build and cache
+    g = get_open_parse_graph(paradigm_name)
+    assert isinstance(g, pynini.Fst)
+    
+    # Assert cached files exist
+    assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_open_parse.fst"))
+    assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_open_inflect.fst"))
+    assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_open_input_acceptor.fst"))
+    assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_stage_cascade.fst"))
+    assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_stages.meta"))
+    assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_stages_seq_0.fst"))
+    
+    # Build again -> should HIT cache
+    g2 = get_open_parse_graph(paradigm_name)
+    assert isinstance(g2, pynini.Fst)
+    
+    # Verify build_inflect_graph_for_root_regex without cache_key hits cache
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    g3 = build_inflect_graph_for_root_regex(paradigm_name, "<Phone>*")
+    assert isinstance(g3, pynini.Fst)
+
+    # Verify build_inflect_graph_for_root_regex with infer_lexical_features=True caches and hits
+    infer_key = f"{cache_key}_infer"
+    for p in [os.path.join(CACHE_DIR, f"{infer_key}_open_inflect.fst"),
+              os.path.join(CACHE_DIR, f"{infer_key}_open_input_acceptor.fst")]:
+        if os.path.exists(p):
+            os.remove(p)
+            
+    g4 = build_inflect_graph_for_root_regex(paradigm_name, "<Phone>*", infer_lexical_features=True)
+    assert isinstance(g4, pynini.Fst)
+    assert os.path.exists(os.path.join(CACHE_DIR, f"{infer_key}_open_inflect.fst"))
+    assert os.path.exists(os.path.join(CACHE_DIR, f"{infer_key}_open_input_acceptor.fst"))
+    
+    # Second call hits cache
+    g5 = build_inflect_graph_for_root_regex(paradigm_name, "<Phone>*", infer_lexical_features=True)
+    assert isinstance(g5, pynini.Fst)
