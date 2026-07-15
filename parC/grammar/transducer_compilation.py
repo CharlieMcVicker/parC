@@ -66,7 +66,8 @@ def compile_rule(rule: Rule) -> pynini.Fst | list[pynini.Fst]:
     if isinstance(rule, RuleSequence):
         rules = get_rules()
         result: list[pynini.Fst] = []
-        for name in rule.rules:
+        for name in rule.rule_sequence:
+            name = name.removeprefix("$")
             sub_fst = compile_rule(rules[name])
             if isinstance(sub_fst, list):
                 result.extend(sub_fst)
@@ -164,7 +165,7 @@ def get_rule_fst_key(rule_name: str) -> str:
     rules = get_rules()
     rule = rules.get(rule_name)
     if isinstance(rule, RuleSequence):
-        for sub_rule_name in rule.rules:
+        for sub_rule_name in rule.rule_sequence:
             child_keys[f"Rule/{sub_rule_name}"] = get_rule_fst_key(sub_rule_name)
     from parC.grammar.acceptor_compilation import get_symbol_table_key
     child_keys["symbol_table"] = get_symbol_table_key()
@@ -219,7 +220,7 @@ def get_rule_fst(rule_name: str) -> pynini.Fst | list[pynini.Fst]:
     rule = rules[rule_name]
 
     if isinstance(rule, RuleSequence):
-        result = [get_rule_fst(name) for name in rule.rules]
+        result = [get_rule_fst(name) for name in rule.rule_sequence]
         # rule sequence returns a flat list of FSTs
         flat_result = []
         for item in result:

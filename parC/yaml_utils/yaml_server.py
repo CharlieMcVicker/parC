@@ -264,7 +264,11 @@ def get_feature_map() -> dict[str, tuple[str, ...]]:
                     f"Duplicate feature found: {feature_name} in {file_path}"
                 )
                 continue
-            features[feature_name] = tuple(feature_data) + ("unmarked",)
+            normalized_values = [
+                val["name"] if isinstance(val, dict) else val
+                for val in feature_data
+            ]
+            features[feature_name] = tuple(normalized_values) + ("unmarked",)
 
     return features
 
@@ -283,8 +287,12 @@ def get_feature_array() -> tuple[Feature]:
 
     for _, yaml_data in features_yaml_data:
         for feature_name, feature_data in yaml_data["features"].items():
+            normalized_values = [
+                val["name"] if isinstance(val, dict) else val
+                for val in feature_data
+            ]
             features.append(
-                Feature(name=feature_name, values=tuple(feature_data) + ("unmarked",))
+                Feature(name=feature_name, values=tuple(normalized_values) + ("unmarked",))
             )
 
     return tuple(features)

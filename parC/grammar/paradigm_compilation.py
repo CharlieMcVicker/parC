@@ -18,7 +18,15 @@ from pynini.lib import pynutil
 from typing import NamedTuple
 from frozendict import frozendict
 
-from parC.yaml_utils.cache import is_fst_cache_valid, save_fst, load_fst, observed_cache, compute_cache_key, get_cached_fst, save_cached_fst
+from parC.yaml_utils.cache import (
+    is_fst_cache_valid,
+    save_fst,
+    load_fst,
+    observed_cache,
+    compute_cache_key,
+    get_cached_fst,
+    save_cached_fst,
+)
 from parC.fst_utils import ReservedSymbolMixin as R
 from parC.fst_utils import stringify_features
 from parC.constants import get_yaml_dir
@@ -176,7 +184,9 @@ def build_inflect_graph_for_root_regex(
         referenced_lexical_features = set()
         contingent_files = paradigm_data.get("contingent_markers", [])
         for contingent_file in contingent_files:
-            contingent_data = get_yaml_data_safe("ContingentFeatureMarkers", contingent_file)
+            contingent_data = get_yaml_data_safe(
+                "ContingentFeatureMarkers", contingent_file
+            )
             if contingent_data:
                 for f in contingent_data.get("features", []):
                     if f in lexical_feature_names:
@@ -186,11 +196,14 @@ def build_inflect_graph_for_root_regex(
                 referenced_lexical_features.add(f)
 
         lexical_value_lists = []
-        for fname in lexical_feature_names:
+        for fname in list(lexical_feature_names):
             if fname not in feature_map:
                 logger.warning(
                     f"Lexical feature '{fname}' not in feature map — skipping."
                 )
+                if fname in referenced_lexical_features:
+                    referenced_lexical_features.remove(fname)
+                lexical_feature_names.remove(fname)
                 continue
             if fname in referenced_lexical_features:
                 lexical_value_lists.append([(fname, v) for v in feature_map[fname]])
@@ -217,6 +230,7 @@ def build_inflect_graph_for_root_regex(
             lexical_feature_names = []
 
     from collections import defaultdict
+
     marker_to_combinations = defaultdict(list)
     input_parts = []
     tag_seqs = []
@@ -228,7 +242,9 @@ def build_inflect_graph_for_root_regex(
             tag_str = f"[{fname}={val}]"
             tag_fsas[tag_str] = pynini.accep(tag_str, token_type=get_symbol_table())
 
-    def get_feature_fsa(feat_vals: FeatureComboType | dict[str, str]) -> pynini.Fst | None:
+    def get_feature_fsa(
+        feat_vals: FeatureComboType | dict[str, str],
+    ) -> pynini.Fst | None:
         if isinstance(feat_vals, (dict, frozendict)):
             feat_vals = list(feat_vals.items())
         sorted_feats = sorted(feat_vals)
@@ -278,7 +294,9 @@ def build_inflect_graph_for_root_regex(
                     lexical_parts.append(tag_fsas[f"[{fname}={val}]"])
                 else:
                     lexical_parts.append(
-                        pynini.union(*[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]])
+                        pynini.union(
+                            *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                        )
                     )
             if lexical_parts:
                 lexical_fsa = lexical_parts[0]
@@ -313,7 +331,11 @@ def build_inflect_graph_for_root_regex(
 
     cascade_domain = pynini.union(*input_parts).optimize()
 
-    from parC.grammar.transducer_compilation import get_gated_marker_fst, get_trigger_fsa
+    from parC.grammar.transducer_compilation import (
+        get_gated_marker_fst,
+        get_trigger_fsa,
+    )
+
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
 
@@ -328,14 +350,19 @@ def build_inflect_graph_for_root_regex(
             return stage_order.index(stage)
         return len(stage_order)
 
-    sorted_markers = sorted(list(marker_to_combinations.keys()), key=get_marker_sort_key)
+    sorted_markers = sorted(
+        list(marker_to_combinations.keys()), key=get_marker_sort_key
+    )
 
     from parC.grammar.acceptor_compilation import get_special_fsas
+
     special_fsas = get_special_fsas()
     phone_fsa = special_fsas["phone"]
     boundary_fsa = special_fsas["boundary"]
     word_edge_fsa = special_fsas["word_edge"]
-    sigma_phones_and_boundaries = pynini.union(phone_fsa, boundary_fsa, word_edge_fsa).optimize()
+    sigma_phones_and_boundaries = pynini.union(
+        phone_fsa, boundary_fsa, word_edge_fsa
+    ).optimize()
     stems_domain_acceptor = sigma_phones_and_boundaries.star.optimize()
 
     # Build tag domain (all valid tag sequences)
@@ -345,7 +372,7 @@ def build_inflect_graph_for_root_regex(
     current_fst = cascade_domain
     for marker in sorted_markers:
         combo_tag_lists = marker_to_combinations[marker]
-        
+
         # Build trigger FST by unioning tag suffixes
         suffix_fsas = []
         for tags in combo_tag_lists:
@@ -355,32 +382,34 @@ def build_inflect_graph_for_root_regex(
                 for part in parts[1:]:
                     seq = pynini.concat(seq, part)
                 suffix_fsas.append(seq)
-        
+
         if suffix_fsas:
             trigger_tags = pynini.union(*suffix_fsas).optimize()
             trigger_fsa = pynini.concat(sigma_star, trigger_tags).optimize()
         else:
             trigger_tags = pynini.accep("", token_type=syms)
             trigger_fsa = sigma_star
-        
+
         from parC.grammar.transducer_compilation import get_marker_fst
+
         base_fst = get_marker_fst(marker)
-        
+
         # Build non-triggering FST using the static tag difference
         non_trigger_tags = pynini.difference(tag_domain, trigger_tags).optimize()
-        non_trigger_fsa = pynini.concat(stems_domain_acceptor, non_trigger_tags).optimize()
-        
-        gated_fst = pynini.union(
-            pynini.compose(trigger_fsa, base_fst),
-            non_trigger_fsa
+        non_trigger_fsa = pynini.concat(
+            stems_domain_acceptor, non_trigger_tags
         ).optimize()
-        
+
+        gated_fst = pynini.union(
+            pynini.compose(trigger_fsa, base_fst), non_trigger_fsa
+        ).optimize()
+
         current_fst = pynini.compose(current_fst, gated_fst).optimize()
 
     # Cleanup Tags
     delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) for t in tag_fsas])
     cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
-    
+
     return pynini.compose(current_fst, cleanup_fst).optimize()
 
 
@@ -450,6 +479,7 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
     child_keys = {}
     try:
         from parC.grammar.transducer_compilation import get_marker_fst_key
+
         feature_map = get_feature_map()
         combos, _, _ = get_feature_combos_for_paradigm(
             name=paradigm_name, feature_map=feature_map, kind="Paradigm"
@@ -464,7 +494,9 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
             except Exception:
                 for root in roots[:5]:
                     try:
-                        markers = get_markers_for_paradigm(combo, paradigm_name, root=root)
+                        markers = get_markers_for_paradigm(
+                            combo, paradigm_name, root=root
+                        )
                         for marker in markers:
                             if isinstance(marker, tuple):
                                 seen_markers.add(marker[0])
@@ -472,19 +504,26 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
                                 seen_markers.add(marker)
                     except Exception:
                         pass
-        
+
         for marker in seen_markers:
             m_key = get_marker_fst_key(marker)
             child_keys[f"Marker/{m_key}"] = m_key
     except Exception as e:
-        logger.warning(f"Error resolving marker dependencies for paradigm {paradigm_name}: {e}")
-        
+        logger.warning(
+            f"Error resolving marker dependencies for paradigm {paradigm_name}: {e}"
+        )
+
     description = f"Paradigm '{paradigm_name}' ({len(seen_markers)} markers resolved)"
-    return compute_cache_key(paradigm_name, "Paradigm", config_dirs, child_keys, description=description)
+    return compute_cache_key(
+        paradigm_name, "Paradigm", config_dirs, child_keys, description=description
+    )
 
 
-def _load_paradigm_cached(cache_key: str) -> tuple[pynini.Fst, pynini.Fst, pynini.Fst, pynini.Fst] | None:
+def _load_paradigm_cached(
+    cache_key: str,
+) -> tuple[pynini.Fst, pynini.Fst, pynini.Fst, pynini.Fst] | None:
     from parC.yaml_utils.cache import CACHE_DIR, record_cache_miss
+
     fsts = []
     for k in _FST_KINDS:
         path = os.path.join(CACHE_DIR, f"{cache_key}_{k}.fst")
@@ -495,7 +534,9 @@ def _load_paradigm_cached(cache_key: str) -> tuple[pynini.Fst, pynini.Fst, pynin
         try:
             fsts.append(pynini.Fst.read(path))
         except Exception as e:
-            logger.debug(f"Paradigm cache MISS for key {cache_key}: failed to read {k}.fst: {e}")
+            logger.debug(
+                f"Paradigm cache MISS for key {cache_key}: failed to read {k}.fst: {e}"
+            )
             record_cache_miss(cache_key)
             return None
     logger.debug(f"Paradigm cache HIT for key {cache_key}")
@@ -510,10 +551,13 @@ def _save_paradigm_cached(
     search_left_factor: pynini.Fst,
 ) -> None:
     from parC.yaml_utils.cache import CACHE_DIR, record_cache_save
+
     inflect.write(os.path.join(CACHE_DIR, f"{cache_key}_inflect.fst"))
     parse.write(os.path.join(CACHE_DIR, f"{cache_key}_parse.fst"))
     search_lexicon.write(os.path.join(CACHE_DIR, f"{cache_key}_search_lexicon.fst"))
-    search_left_factor.write(os.path.join(CACHE_DIR, f"{cache_key}_search_left_factor.fst"))
+    search_left_factor.write(
+        os.path.join(CACHE_DIR, f"{cache_key}_search_left_factor.fst")
+    )
     record_cache_save(cache_key)
 
 

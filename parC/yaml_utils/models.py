@@ -62,10 +62,10 @@ class RuleSequence(NamedTuple):
     """
     A sequence of rules to be applied.
     Here just stored as a list of strings indicating rule names,
-    which are resolved to rule data up in `fst_compilation.compile_rule`
+    which are resolved to rule data up in `transducer_compilation.compile_rule`
     """
 
-    rules: tuple[str, ...]
+    rule_sequence: tuple[str, ...]
     description: str = ""
 
 
