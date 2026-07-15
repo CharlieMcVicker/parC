@@ -20,7 +20,9 @@ from parC.yaml_utils.models import (
     PrincipalPartMarker,
     resolve_marker,
 )
-from parC.yaml_utils.yaml_server import get_markers, get_yaml_data_safe, get_feature_map
+from parC.yaml_utils.yaml_server import get_markers, get_yaml_data_safe, get_feature_map, get_yaml_path
+from parC.constants import get_yaml_dir
+from parC.yaml_utils.cache import get_file_sha256
 import itertools
 import functools
 from frozendict import frozendict
@@ -29,6 +31,158 @@ FeatureComboType = set[tuple[str, str]]
 
 
 _markers_for_paradigm_cache = {}
+_precomputed_paradigm_markers_cache = {}
+
+
+def get_paradigm_cache_key(paradigm_name: str) -> tuple:
+    """Computes a unique cache key based on the current yaml_dir and referenced file hashes."""
+    yaml_dir = get_yaml_dir()
+    
+    # 1. Get paradigm yaml hash
+    paradigm_path = get_yaml_path("Paradigm", paradigm_name)
+    paradigm_hash = get_file_sha256(paradigm_path)
+    
+    # 2. Get hashes of referenced marker files
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if paradigm_data is None:
+        return (yaml_dir, paradigm_name, "", (), ())
+        
+    _, marker_files, contingent_files = get_feature_combos_for_paradigm(
+        name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
+    )
+    
+    marker_hashes = tuple(
+        get_file_sha256(get_yaml_path("FeatureMarkers", f))
+        for f in sorted(marker_files)
+    )
+    contingent_hashes = tuple(
+        get_file_sha256(get_yaml_path("ContingentFeatureMarkers", f))
+        for f in sorted(contingent_files)
+    )
+    
+    return (yaml_dir, paradigm_name, paradigm_hash, marker_hashes, contingent_hashes)
+
+
+def get_sorted_markers_for_paradigm(paradigm_name: str) -> dict:
+    """
+    Precomputes, resolves, and caches all markers in the paradigm sorted by their stage order.
+    """
+    key = get_paradigm_cache_key(paradigm_name)
+    if key in _precomputed_paradigm_markers_cache:
+        return _precomputed_paradigm_markers_cache[key]
+
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if paradigm_data is None:
+        raise ValueError(f"Paradigm {paradigm_name} not found")
+        
+    _, marker_files, contingent_files = get_feature_combos_for_paradigm(
+        name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
+    )
+    
+    part_of_speech = paradigm_data["part_of_speech"]
+    part_of_speech_data = get_yaml_data_safe(
+        yaml_basename=part_of_speech, kind="PartOfSpeech"
+    )
+    lexical_feature_names = set(part_of_speech_data.get("lexical_features", []))
+    
+    global_stage = paradigm_data.get("global_stage")
+    stage_order = list(paradigm_data.get("stage_order", []))
+    if "principal_part" not in stage_order:
+        stage_order.insert(0, "principal_part")
+        
+    def process_marker(marker: Marker) -> Marker:
+        marker = resolve_marker(marker)
+        if hasattr(marker, "stage") and marker.stage is None and global_stage is not None:
+            marker = marker._replace(stage=global_stage)
+        if marker.kind == "principal_part":
+            roots = get_roots(part_of_speech)
+            pps = get_principal_part_for_all_roots(part_of_speech, marker.value)
+            marker = PrincipalPartMarker(
+                kind="string_map",
+                display_value=marker.value,
+                value=tuple(zip(roots, pps)),
+            )
+        return marker
+
+    contingent_by_file = {}
+    contingent_features = {}
+    all_markers = []
+    
+    # 1. Process contingent markers
+    for contingent_file in contingent_files:
+        data = get_yaml_data_safe("ContingentFeatureMarkers", contingent_file)
+        features_list = data.get("features", [])
+        inflectional_contingent_names = {
+            f for f in features_list if f not in lexical_feature_names
+        }
+        contingent_features[contingent_file] = inflectional_contingent_names
+        
+        leaves = []
+        
+        def traverse(curr, path_features: dict):
+            if isinstance(curr, list):
+                resolved_list = []
+                contingent_feature_values = {
+                    (f, v) for f, v in path_features.items() if f not in lexical_feature_names
+                }
+                for m in curr:
+                    pm = process_marker(m)
+                    resolved_list.append((pm, contingent_feature_values))
+                    all_markers.append((pm, contingent_feature_values))
+                leaves.append((frozenset(path_features.items()), resolved_list))
+            elif isinstance(curr, dict):
+                level = len(path_features)
+                if level < len(features_list):
+                    feature_name = features_list[level]
+                    for val, sub in curr.items():
+                        new_path = path_features.copy()
+                        new_path[feature_name] = val
+                        traverse(sub, new_path)
+                        
+        traverse(data.get("markers", {}), {})
+        contingent_by_file[contingent_file] = leaves
+
+    # 2. Process regular markers
+    regular_by_feature = {}
+    for marker_file in marker_files:
+        data = get_yaml_data_safe("FeatureMarkers", marker_file)
+        marker_feature = data["feature"]
+        if marker_feature not in regular_by_feature:
+            regular_by_feature[marker_feature] = {}
+        for val, marker_list in data.get("markers", {}).items():
+            resolved_list = []
+            marker_feature_set = {(marker_feature, val)}
+            for m in marker_list:
+                pm = process_marker(m)
+                resolved_list.append((pm, marker_feature_set))
+                all_markers.append((pm, marker_feature_set))
+            regular_by_feature[marker_feature][val] = resolved_list
+
+    # 3. Process global markers
+    global_markers = []
+    if "global_markers" in paradigm_data:
+        for m in paradigm_data["global_markers"]:
+            pm = process_marker(m)
+            global_markers.append((pm, "global"))
+            all_markers.append((pm, "global"))
+
+    # Sort all_markers by stage order
+    all_markers.sort(
+        key=lambda m: (
+            stage_order.index(m[0].stage) if m[0].stage in stage_order else float("inf")
+        )
+    )
+
+    res = {
+        "all_markers_sorted": all_markers,
+        "contingent_by_file": contingent_by_file,
+        "contingent_features": contingent_features,
+        "regular_by_feature": regular_by_feature,
+        "global_markers": global_markers,
+        "lexical_feature_names": lexical_feature_names,
+    }
+    _precomputed_paradigm_markers_cache[key] = res
+    return res
 
 
 def get_markers_for_paradigm(
@@ -53,7 +207,9 @@ def get_markers_for_paradigm(
         if isinstance(lexical_features, (dict, frozendict))
         else (frozenset(lexical_features) if lexical_features else frozenset())
     )
-    cache_key = (fv_key, paradigm_name, include_features, root, lex_key)
+    
+    paradigm_hash_key = get_paradigm_cache_key(paradigm_name)
+    cache_key = (fv_key, paradigm_name, include_features, root, lex_key, paradigm_hash_key)
     if cache_key in _markers_for_paradigm_cache:
         return list(_markers_for_paradigm_cache[cache_key])
 
@@ -61,6 +217,9 @@ def get_markers_for_paradigm(
         feature_values: FeatureComboType = set(feature_values.items())
     # avoid side effects
     feature_values = feature_values.copy()
+
+    precomputed = get_sorted_markers_for_paradigm(paradigm_name)
+    lexical_feature_names = precomputed["lexical_feature_names"]
 
     if paradigm_data is None:
         paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
@@ -71,8 +230,8 @@ def get_markers_for_paradigm(
     )
     feature_values -= fixed_features
 
-    combos, marker_files, contingent_files = get_feature_combos_for_paradigm(
-        name=paradigm_name, kind="Paradigm"
+    combos, _, _ = get_feature_combos_for_paradigm(
+        name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
     )
     combos = [combo - fixed_features for combo in combos]
 
@@ -82,11 +241,6 @@ def get_markers_for_paradigm(
         )
 
     part_of_speech = paradigm_data["part_of_speech"]
-    part_of_speech_data = get_yaml_data_safe(
-        yaml_basename=part_of_speech, kind="PartOfSpeech"
-    )
-    lexical_feature_names = set(part_of_speech_data.get("lexical_features", []))
-
     if root:
         lex_set = set(get_features_for_root(part_of_speech, root))
         feature_values |= lex_set
@@ -97,62 +251,50 @@ def get_markers_for_paradigm(
             lex_set = set(lexical_features)
         feature_values |= lex_set
 
-    markers = get_markers(
-        feature_marker_files=marker_files,
-        contingent_feature_marker_files=contingent_files,
-        feature_values=feature_values,
-        lexical_feature_names=lexical_feature_names,
-    )
+    # Selection Logic:
+    unexponed_features = {
+        feature for feature, _ in feature_values if feature not in lexical_feature_names
+    }
+    selected_markers = []
 
-    # any global markers defined in the paradigm should be applied to all feature combinations
-    # check if current feature set has a principal part, if so we don't override
-    has_principal_part = any(marker.kind == "principal_part" for marker, _ in markers)
-    if "global_markers" in paradigm_data:
-        markers.extend(
-            (resolve_marker(marker), "global")
-            for marker in paradigm_data["global_markers"]
-            if not (has_principal_part and marker.kind == "principal_part")
-        )
+    # 1. Match contingent feature markers
+    for contingent_file, leaves in precomputed["contingent_by_file"].items():
+        for reqs, markers_list in leaves:
+            if reqs.issubset(feature_values):
+                selected_markers.extend(markers_list)
+                unexponed_features -= precomputed["contingent_features"][contingent_file]
+                break
 
-    # global stage applies to any unstaged marker, but does not override
-    # staged markers
-    if "global_stage" in paradigm_data:
-        for i, marker_tuple in enumerate(markers):
-            marker, feature_set = marker_tuple
-            if hasattr(marker, "stage") and marker.stage is None:
-                markers[i] = (
-                    marker._replace(stage=paradigm_data["global_stage"]),
-                    feature_set,
-                )
+    # 2. Match remaining features with regular feature markers
+    for feature in list(unexponed_features):
+        val = next((v for f, v in feature_values if f == feature), None)
+        if val is not None:
+            markers_list = precomputed["regular_by_feature"].get(feature, {}).get(val, [])
+            if markers_list:
+                selected_markers.extend(markers_list)
+                unexponed_features.remove(feature)
 
-    # principle part markers need access to the lexicon to resolve into a StringMapMarker
-    part_of_speech = paradigm_data["part_of_speech"]
-    for i, marker_tuple in enumerate(markers):
-        marker, feature_set = marker_tuple
-        if marker.kind == "principal_part":
-            roots = get_roots(part_of_speech)
-            pps = get_principal_part_for_all_roots(part_of_speech, marker.value)
-            markers[i] = (
-                PrincipalPartMarker(
-                    kind="string_map",
-                    display_value=marker.value,
-                    value=tuple(zip(roots, pps)),
-                ),
-                feature_set,
-            )
+    if unexponed_features:
+        raise ValueError("Provided marker sets do not support requested feature set")
 
-    # order of application specified by paradigm's stage_order, if present
-    stage_order: list[str] | None = paradigm_data.get("stage_order", [])
-    # principal parts always come first
-    # TODO: need to support suppletion
-    # i.e. suppletion should also be first, and it should be mutually exclusive
-    # with principal part
-    stage_order.insert(0, "principal_part")
-    markers.sort(
-        key=lambda m: (
-            stage_order.index(m[0].stage) if m[0].stage in stage_order else float("inf")
-        )
-    )
+    # 3. Add global markers (unless overridden by principal parts)
+    has_principal_part = any(marker.kind == "principal_part" for marker, _ in selected_markers)
+    for marker, f_set in precomputed["global_markers"]:
+        if not (has_principal_part and marker.kind == "principal_part"):
+            selected_markers.append((marker, f_set))
+
+    # To preserve the stage order precomputed in all_markers_sorted,
+    # we filter all_markers_sorted to only keep the selected ones.
+    selected_set = {
+        (m, frozenset(fs) if isinstance(fs, set) else fs)
+        for m, fs in selected_markers
+    }
+
+    markers = []
+    for m, fs in precomputed["all_markers_sorted"]:
+        fs_key = frozenset(fs) if isinstance(fs, set) else fs
+        if (m, fs_key) in selected_set:
+            markers.append((m, fs))
 
     if not include_features:
         markers = [marker for marker, _ in markers]
