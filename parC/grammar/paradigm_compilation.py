@@ -354,28 +354,6 @@ def _compile_stage_cascade(
         # Precompile wildcards for each feature
         from parC.yaml_utils.yaml_server import get_optional_features
         optional_features = get_optional_features()
-        any_val_fsas = {}
-        for fname in ordered_features:
-            val_options = [tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
-            if fname in optional_features:
-                val_options.insert(0, pynini.accep("", token_type=syms))
-            any_val_fsas[fname] = pynini.union(*val_options).optimize()
-
-        def get_constraint_fsa(fs) -> pynini.Fst:
-            if not fs:
-                return pynini.accep("", token_type=syms)
-            fs_dict = dict(fs)
-            parts = []
-            for fname in ordered_features:
-                if fname in fs_dict:
-                    val = fs_dict[fname]
-                    parts.append(tag_fsas[f"[{fname}={val}]"])
-                else:
-                    parts.append(any_val_fsas[fname])
-            seq = parts[0]
-            for part in parts[1:]:
-                seq = pynini.concat(seq, part)
-            return seq
 
         # Apply sequential composition cascade by stage
         gated_fsts = []
@@ -384,6 +362,42 @@ def _compile_stage_cascade(
                 f"[PERF][stage cascade] building stage '{stage}' {(stage_no+1)/len(ordered_stages)}"
             )
             markers = stage_to_markers[stage]
+            
+            # Identify features exponed in this stage
+            exponed_in_stage = set()
+            for marker in markers:
+                for fs in marker_to_combinations[marker]:
+                    for fname in dict(fs).keys():
+                        exponed_in_stage.add(fname)
+            # Compile stage-specific wildcards
+            any_val_fsas = {}
+            for fname in ordered_features:
+                if fname in exponed_in_stage:
+                    # Feature is exponed in this stage: other markers in this stage must require it to be absent
+                    any_val_fsas[fname] = pynini.accep("", token_type=syms)
+                else:
+                    # Feature is NOT exponed in this stage: other markers can match any value (or absent if optional)
+                    val_options = [tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                    if fname in optional_features:
+                        val_options.insert(0, pynini.accep("", token_type=syms))
+                    any_val_fsas[fname] = pynini.union(*val_options).optimize()
+
+            def get_constraint_fsa(fs) -> pynini.Fst:
+                if not fs:
+                    return pynini.accep("", token_type=syms)
+                fs_dict = dict(fs)
+                parts = []
+                for fname in ordered_features:
+                    if fname in fs_dict:
+                        val = fs_dict[fname]
+                        parts.append(tag_fsas[f"[{fname}={val}]"])
+                    else:
+                        parts.append(any_val_fsas[fname])
+                seq = parts[0]
+                for part in parts[1:]:
+                    seq = pynini.concat(seq, part)
+                return seq
+
             trigger_paths = []
 
             # Check if there is a global marker in this stage
@@ -410,7 +424,7 @@ def _compile_stage_cascade(
                         tag_domain, marker_constraint_union
                     ).optimize()
                     marker_trigger_fsa = pynini.concat(
-                        sigma_star, marker_trigger_tags
+                        stems_domain_acceptor, marker_trigger_tags
                     ).optimize()
                 else:
                     marker_trigger_fsa = sigma_star

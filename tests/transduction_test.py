@@ -922,5 +922,151 @@ def test_optional_feature_flags():
                     pass
 
 
+def test_optional_prefix_feature():
+    from parC.constants import get_yaml_dir
+    from parC.yaml_utils.yaml_server import get_yaml_kind
+    from parC.grammar.paradigm_compilation import get_open_parse_graph, build_inflect_graph
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
+    import yaml
+    import pandas as pd
+    import pynini
+
+    yaml_dir = get_yaml_dir()
+    features_dir = os.path.join(yaml_dir, "Exponence", "FeatureDefinitions")
+    pos_dir = os.path.join(yaml_dir, "Lexicon", "PartOfSpeech")
+    markers_dir = os.path.join(yaml_dir, "Exponence", "FeatureMarkers")
+    paradigm_dir = os.path.join(yaml_dir, "Morphotactics", "Paradigm")
+    wordlist_dir = os.path.join(yaml_dir, "Lexicon", "Wordlists")
+
+    os.makedirs(features_dir, exist_ok=True)
+    os.makedirs(pos_dir, exist_ok=True)
+    os.makedirs(markers_dir, exist_ok=True)
+    os.makedirs(paradigm_dir, exist_ok=True)
+    os.makedirs(wordlist_dir, exist_ok=True)
+
+    feature_file = os.path.join(features_dir, "opt_prefix_features.yaml")
+    pos_file = os.path.join(pos_dir, "opt_prefix_pos.yaml")
+    markers_file = os.path.join(markers_dir, "opt_prefix_markers.yaml")
+    tense_markers_file = os.path.join(markers_dir, "opt_tense_markers.yaml")
+    paradigm_file = os.path.join(paradigm_dir, "opt_prefix_paradigm.yaml")
+    csv_file = os.path.join(wordlist_dir, "opt_prefix_pos.csv")
+
+    feature_data = {
+        "kind": "FeatureDefinitions",
+        "features": {
+            "middle_voice": {
+                "values": ["at", "atat", "ata"],
+                "optional": True,
+            },
+        },
+    }
+
+    pos_data = {
+        "kind": "PartOfSpeech",
+        "name": "opt_prefix_pos",
+        "features": ["tense"],
+        "lexical_features": ["middle_voice"],
+    }
+
+    markers_data = {
+        "kind": "FeatureMarkers",
+        "feature": "middle_voice",
+        "markers": {
+            "at": [{"kind": "prefix", "value": "at-"}],
+            "atat": [{"kind": "prefix", "value": "atat-"}],
+            "ata": [{"kind": "prefix", "value": "ata-"}],
+        },
+    }
+
+    tense_markers_data = {
+        "kind": "FeatureMarkers",
+        "feature": "tense",
+        "markers": {
+            "past": [{"kind": "suffix", "value": "-a"}],
+        },
+    }
+
+    paradigm_data = {
+        "kind": "Paradigm",
+        "part_of_speech": "$opt_prefix_pos",
+        "feature_markers": {
+            "middle_voice": "$opt_prefix_markers",
+            "tense": "$opt_tense_markers",
+        },
+    }
+
+    df = pd.DataFrame([
+        {"root": "atl", "gloss": "be", "middle_voice": ""},
+        {"root": "atl", "gloss": "be", "middle_voice": "at"},
+        {"root": "atl", "gloss": "be", "middle_voice": "atat"},
+        {"root": "atl", "gloss": "be", "middle_voice": "ata"},
+    ])
+
+    with open(feature_file, "w") as f:
+        yaml.dump(feature_data, f)
+    with open(pos_file, "w") as f:
+        yaml.dump(pos_data, f)
+    with open(markers_file, "w") as f:
+        yaml.dump(markers_data, f)
+    with open(tense_markers_file, "w") as f:
+        yaml.dump(tense_markers_data, f)
+    with open(paradigm_file, "w") as f:
+        yaml.dump(paradigm_data, f)
+    df.to_csv(csv_file, index=False)
+
+    try:
+        from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
+        _get_yaml_data_safe_cached.cache_clear()
+        
+        from parC.grammar.paradigm_compilation import (
+            _get_active_combos_for_paradigm,
+            get_roots_for_paradigm
+        )
+        _get_active_combos_for_paradigm.cache_clear()
+        get_roots_for_paradigm.cache_clear()
+        
+        from parC.grammar.marker_resolution import _feature_combos_for_paradigm_cache
+        _feature_combos_for_paradigm_cache.clear()
+
+        # Clear disk cache
+        import shutil
+        from parC.yaml_utils.cache import CACHE_DIR
+        if os.path.exists(CACHE_DIR):
+            try:
+                shutil.rmtree(CACHE_DIR)
+            except Exception:
+                pass
+        os.makedirs(CACHE_DIR, exist_ok=True)
+
+        open_parse_graph = get_open_parse_graph(
+            "opt_prefix_paradigm", non_deterministic_cleanup=True, infer_lexical_features=True
+        )
+        assert isinstance(open_parse_graph, pynini.Fst)
+
+        # Parse atl-a (should parse to: [BOW]atl[EOW][tense=past])
+        # It should NOT parse to [BOW]atl[EOW][middle_voice=at][tense=past] because at- was not present!
+        input_fsa = word_fsa("atl-a")
+        output_lattice = pynini.compose(input_fsa, open_parse_graph).optimize()
+        output_lattice = pynini.project(output_lattice, project_type="output")
+        parses = fsm_strings(output_lattice, strip_all_tags=False)
+
+        print("DEBUG parses for atl-a:", parses)
+
+        # Assertions
+        assert "[BOW]atl[EOW][tense=past]" in parses
+        for p in parses:
+            if "[middle_voice=" in p:
+                raise AssertionError(f"Prefix tag was not removed/enforced correctly: found '{p}' in parses: {parses}")
+
+    finally:
+        # Clean up files
+        for p in [feature_file, pos_file, markers_file, tense_markers_file, paradigm_file, csv_file]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+
 
 
