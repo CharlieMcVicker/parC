@@ -595,17 +595,20 @@ def _compile_inflect_graph_shared(
 
         lexical_parts = []
         if infer_lexical_features:
+            from parC.yaml_utils.yaml_server import get_optional_features
+            optional_features = get_optional_features()
             for fname in lexical_feature_names:
                 if fname in referenced_lexical_features:
                     val_opt = next((v for f, v in lexical_combo if f == fname), None)
-                    if val_opt is not None:
+                    if val_opt is not None and val_opt != "":
                         lexical_parts.append(tag_fsas[f"[{fname}={val_opt}]"])
                 else:
-                    lexical_parts.append(
-                        pynini.union(
-                            *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                    if fname not in optional_features:
+                        lexical_parts.append(
+                            pynini.union(
+                                *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                            )
                         )
-                    )
         if lexical_parts:
             lexical_fsa = lexical_parts[0]
             for part in lexical_parts[1:]:
@@ -639,17 +642,20 @@ def _compile_inflect_graph_shared(
     for lexical_combo in unique_lexical_combos:
         lexical_parts = []
         if infer_lexical_features:
+            from parC.yaml_utils.yaml_server import get_optional_features
+            optional_features = get_optional_features()
             for fname in lexical_feature_names:
                 if fname in referenced_lexical_features:
                     val_opt = next((v for f, v in lexical_combo if f == fname), None)
-                    if val_opt is not None:
+                    if val_opt is not None and val_opt != "":
                         lexical_parts.append(tag_fsas[f"[{fname}={val_opt}]"])
                 else:
-                    lexical_parts.append(
-                        pynini.union(
-                            *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                    if fname not in optional_features:
+                        lexical_parts.append(
+                            pynini.union(
+                                *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                            )
                         )
-                    )
         if lexical_parts:
             lexical_fsa = lexical_parts[0]
             for part in lexical_parts[1:]:
@@ -967,6 +973,7 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
         kind_dir("FeatureDefinitions"),
     ]
     child_keys = {}
+    seen_markers = set()
     try:
         from parC.grammar.transducer_compilation import get_marker_fst_key
 
@@ -974,7 +981,6 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
         combos, _, _ = get_feature_combos_for_paradigm(
             name=paradigm_name, feature_map=feature_map, kind="Paradigm"
         )
-        seen_markers = set()
         roots = get_roots_for_paradigm(paradigm_name)
         for combo in combos:
             try:
