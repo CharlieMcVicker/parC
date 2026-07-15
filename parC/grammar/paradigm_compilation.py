@@ -16,8 +16,10 @@ import functools
 import pynini
 from loguru import logger
 from pynini.lib import pynutil
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 from frozendict import frozendict
+
+BinaryFstOp = Callable[[pynini.Fst, pynini.Fst], pynini.Fst]
 
 from parC.yaml_utils.cache import (
     is_fst_cache_valid,
@@ -113,21 +115,49 @@ def get_roots_for_paradigm(paradigm_name: str) -> list[str]:
 """
 
 
-def binary_fold_intersect(fsts: list):
-    if len(fsts) == 0:
+def binary_fold(
+    fsts: list[pynini.Fst],
+    op: Callable[[pynini.Fst, pynini.Fst], pynini.Fst],
+) -> pynini.Fst:
+    if not fsts:
         return pynini.Fst()
-    elif len(fsts) == 1:
+    if len(fsts) == 1:
         return fsts[0]
-    else:
-        pivot = len(fsts) // 2
-        return pynini.connect(
-            pynini.rmepsilon(
-                pynini.intersect(
-                    binary_fold_intersect(fsts[:pivot]),
-                    binary_fold_intersect(fsts[pivot:]),
-                )
-            )
-        )
+    pivot = len(fsts) // 2
+    return op(
+        binary_fold(fsts[:pivot], op),
+        binary_fold(fsts[pivot:], op),
+    )
+
+
+def intersect_and_optimize(a: pynini.Fst, b: pynini.Fst) -> pynini.Fst:
+    return pynini.rmepsilon(pynini.connect(pynini.intersect(a, b)))
+
+
+def binary_fold_intersect(
+    fsts: list[pynini.Fst],
+):
+    return binary_fold(fsts, intersect_and_optimize)
+
+
+def compose_and_optimize(a: pynini.Fst, b: pynini.Fst) -> pynini.Fst:
+    return pynini.rmepsilon(pynini.connect(pynini.compose(a, b)))
+
+
+def binary_fold_compose(
+    fsts: list[pynini.Fst],
+):
+    return binary_fold(fsts, compose_and_optimize)
+
+
+def union_and_optimize(a: pynini.Fst, b: pynini.Fst) -> pynini.Fst:
+    return pynini.union(a, b).optimize()
+
+
+def binary_fold_union(
+    fsts: list[pynini.Fst],
+):
+    return binary_fold(fsts, union_and_optimize)
 
 
 def _apply_feature_acceptor_constraints(
@@ -257,9 +287,14 @@ def _compile_stage_cascade(
     )
 
     cascade_domain = pynini.union(*input_parts).optimize()
+
+    logger.info(
+        f"[PERF][stage cascade] cascade domain built - len input_parts {len(input_parts)}"
+    )
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
 
+    logger.info(f"[PERF][stage cascade] syms and sigma star built")
     # Group markers by stage
     from collections import defaultdict
 
@@ -269,6 +304,8 @@ def _compile_stage_cascade(
         if stage is None:
             stage = "unknown"
         stage_to_markers[stage].append(marker)
+
+    logger.info(f"[PERF][stage cascade] grouped markers by stage")
 
     # Order stages
     stage_order = list(paradigm_data.get("stage_order", []))
@@ -285,6 +322,8 @@ def _compile_stage_cascade(
         if s not in ordered_stages:
             ordered_stages.append(s)
 
+    logger.info(f"[PERF][stage cascade] ordered stages")
+
     from parC.grammar.acceptor_compilation import get_special_fsas
 
     special_fsas = get_special_fsas()
@@ -296,12 +335,20 @@ def _compile_stage_cascade(
     ).optimize()
     stems_domain_acceptor = sigma_phones_and_boundaries.star.optimize()
 
+    logger.info(f"[PERF][stage cascade] stem domain acceptor built")
+
     # Build tag domain (all valid tag sequences)
+    # tag_domain = binary_fold_union([t.optimize() for t in tag_seqs]).optimize()
     tag_domain = pynini.union(*tag_seqs).optimize()
 
+    logger.info(f"[PERF][stage cascade] tag domain built - len tags {len(tag_seqs)}")
+
     # Apply sequential composition cascade by stage
-    current_fst = cascade_domain
-    for stage in ordered_stages:
+    gated_fsts = []
+    for stage_no, stage in enumerate(ordered_stages):
+        logger.info(
+            f"[PERF][stage cascade] building stage '{stage}' {(stage_no+1)/len(ordered_stages)}"
+        )
         markers = stage_to_markers[stage]
         trigger_paths = []
         all_stage_trigger_tags = []
@@ -323,7 +370,9 @@ def _compile_stage_cascade(
                         parts.append(tag_fsas[f"[{fname}={val}]"])
                     else:
                         # Wildcard: match any value for this feature
-                        any_val_fsa = pynini.union(*[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]])
+                        any_val_fsa = pynini.union(
+                            *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                        )
                         parts.append(any_val_fsa)
                 if parts:
                     seq = parts[0]
@@ -356,13 +405,24 @@ def _compile_stage_cascade(
         ).optimize()
 
         gated_fst = pynini.union(*(trigger_paths + [non_trigger_fsa])).optimize()
-        current_fst = pynini.compose(current_fst, gated_fst).optimize()
+        gated_fsts.append(gated_fst)
+    logger.info(f"[PERF][stage cascade] stages built")
+
+    composed_fst = pynini.compose(
+        cascade_domain, binary_fold_compose(gated_fsts)
+    ).optimize()
+
+    logger.info(f"[PERF][stage cascade] stages composed")
 
     # Cleanup Tags
     delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) for t in tag_fsas])
     cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
 
-    return pynini.compose(current_fst, cleanup_fst).optimize()
+    res = pynini.compose(composed_fst, cleanup_fst).optimize()
+
+    logger.info(f"[PERF][stage cascade] cleanup filters applied")
+
+    return res
 
 
 @functools.lru_cache(maxsize=128)
@@ -448,7 +508,9 @@ def _compile_inflect_graph_shared(
         return curr
 
     active_combos = _get_active_combos_for_paradigm(
-        paradigm_name, frozenset(frozenset(c) for c in combos), lex_combos_set_for_active
+        paradigm_name,
+        frozenset(frozenset(c) for c in combos),
+        lex_combos_set_for_active,
     )
 
     for root_fsa, lexical_combo in roots_and_lexical_combos:
@@ -478,7 +540,11 @@ def _compile_inflect_graph_shared(
                 continue
 
             for marker, fs in markers:
-                fs_frozen = frozenset(fs.items()) if isinstance(fs, dict) else (frozenset(fs) if fs != "global" else frozenset())
+                fs_frozen = (
+                    frozenset(fs.items())
+                    if isinstance(fs, dict)
+                    else (frozenset(fs) if fs != "global" else frozenset())
+                )
                 if fs_frozen not in marker_to_combinations[marker]:
                     marker_to_combinations[marker].append(fs_frozen)
 
@@ -493,7 +559,10 @@ def _compile_inflect_graph_shared(
                     else:
                         lexical_parts.append(
                             pynini.union(
-                                *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                                *[
+                                    tag_fsas[f"[{fname}={v}]"]
+                                    for v in feature_map[fname]
+                                ]
                             )
                         )
             if lexical_parts:
@@ -527,7 +596,9 @@ def _compile_inflect_graph_shared(
     ordered_features = []
     if infer_lexical_features:
         ordered_features.extend(lexical_feature_names)
-    ordered_features.extend(sorted(list(set().union(*[set(dict(c).keys()) for c in combos]))))
+    ordered_features.extend(
+        sorted(list(set().union(*[set(dict(c).keys()) for c in combos])))
+    )
 
     return _compile_stage_cascade(
         paradigm_name=paradigm_name,
@@ -553,6 +624,7 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
     )
 
     from parC.lexicon import get_features_for_root
+
     part_of_speech = paradigm_data["part_of_speech"]
 
     roots_and_lexical_combos = []
