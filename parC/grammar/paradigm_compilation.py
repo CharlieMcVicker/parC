@@ -165,88 +165,23 @@ def _apply_feature_acceptor_constraints(
     return constrained_fsa
 
 
-def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
-    """root[features...] → surface form."""
-    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-    if paradigm_data is None:
-        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
-
-    feature_map = get_feature_map()
-    roots = get_roots_for_paradigm(paradigm_name=paradigm_name)
-    combos, _, _ = get_feature_combos_for_paradigm(
-        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
-    )
-
-    inflect_fsts: list[pynini.Fst] = []
-    for root in roots:
-        root_fsa = word_fsa(root)
-        for feature_values in combos:
-            constrained_root_fsa = _apply_feature_acceptor_constraints(
-                root_fsa, feature_values
-            )
-            if constrained_root_fsa.num_states() == 0:
-                continue
-
-            try:
-                markers = get_markers_for_paradigm(
-                    feature_values, paradigm_name, root=root
-                )
-                inflected_output = pynini.project(
-                    _apply_markers(constrained_root_fsa, markers), project_type="output"
-                )
-            except Exception as e:
-                # logger.debug(
-                #     f"Skipping {paradigm_name} root={root} fv={feature_values}: {e}"
-                # )
-                continue
-
-            feature_str = stringify_features(feature_values)
-            inflect_input = (
-                pynini.concat(constrained_root_fsa, fsa(feature_str))
-                if feature_str
-                else constrained_root_fsa
-            )
-            inflect_fsts.append(
-                pynini.cross(inflect_input, inflected_output).optimize()
-            )
-
-    if not inflect_fsts:
-        return pynini.Fst()
-    return pynini.union(*inflect_fsts).optimize()
-
-
-def build_inflect_graph_for_root_regex(
-    paradigm_name: str,
-    root_regex: str | pynini.Fst,
+def _resolve_lexical_combos(
+    paradigm_data: dict,
+    feature_map: dict[str, list[str]],
     lexical_features: FeatureComboType | dict[str, str] | None = None,
     infer_lexical_features: bool = False,
-) -> pynini.Fst:
-    """root_regex[lexical_features][inflectional_features] → surface form."""
+) -> tuple[list[set[tuple[str, str]]], set[str], list[str]]:
+    """
+    Helper to resolve lexical combos, referenced lexical features, and sorted lexical feature names.
+    """
     import itertools
-
-    if isinstance(root_regex, str):
-        root_fsa = fsa(R.bow + root_regex + R.eow)
-    else:
-        root_fsa = root_regex
-
-    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-    if paradigm_data is None:
-        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
-
-    feature_map = get_feature_map()
-    combos, _, _ = get_feature_combos_for_paradigm(
-        name=paradigm_name,
-        feature_map=feature_map,
-        kind="Paradigm",
-        paradigm_data=paradigm_data,
-    )
 
     if infer_lexical_features:
         part_of_speech = paradigm_data["part_of_speech"]
         part_of_speech_data = get_yaml_data_safe(
             yaml_basename=part_of_speech, kind="PartOfSpeech"
         )
-        lexical_feature_names = part_of_speech_data.get("lexical_features", [])
+        lexical_feature_names = list(part_of_speech_data.get("lexical_features", []))
 
         # Prune lexical features to only those referenced in this paradigm's rules/markers
         referenced_lexical_features = set()
@@ -297,124 +232,29 @@ def build_inflect_graph_for_root_regex(
             referenced_lexical_features = set()
             lexical_feature_names = []
 
-    from collections import defaultdict
+    return lexical_combos, referenced_lexical_features, lexical_feature_names
 
-    marker_to_combinations = defaultdict(list)
-    input_parts = []
-    tag_seqs = []
 
-    # We can pre-compile tag acceptors to avoid calling fsa(...) repeatedly.
-    tag_fsas = {}
-    for fname, fvals in feature_map.items():
-        for val in fvals:
-            tag_str = f"[{fname}={val}]"
-            tag_fsas[tag_str] = pynini.accep(tag_str, token_type=get_symbol_table())
-
-    def get_feature_fsa(
-        feat_vals: FeatureComboType | dict[str, str],
-    ) -> pynini.Fst | None:
-        if isinstance(feat_vals, (dict, frozendict)):
-            feat_vals = list(feat_vals.items())
-        sorted_feats = sorted(feat_vals)
-        if not sorted_feats:
-            return None
-        parts = [tag_fsas[f"[{f}={v}]"] for f, v in sorted_feats]
-        curr = parts[0]
-        for part in parts[1:]:
-            curr = pynini.concat(curr, part)
-        return curr
-
-    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-
-    for lexical_combo in lexical_combos:
-        constrained_root_fsa = _apply_feature_acceptor_constraints(
-            root_fsa, lexical_combo
-        )
-        if constrained_root_fsa.num_states() == 0:
-            continue
-        for feature_values in combos:
-            try:
-                markers = get_markers_for_paradigm(
-                    feature_values,
-                    paradigm_name,
-                    root=None,
-                    lexical_features=lexical_combo,
-                    include_features=True,
-                    paradigm_data=paradigm_data,
-                )
-            except Exception as e:
-                # logger.debug(
-                #     f"Skipping {paradigm_name} root_regex={root_regex} fv={feature_values} lex={lexical_combo}: {e}"
-                # )
-                continue
-
-            if infer_lexical_features:
-                lex_tags = []
-                for fname in lexical_feature_names:
-                    val = next((v for f, v in lexical_combo if f == fname), None)
-                    if val is not None:
-                        lex_tags.append(f"[{fname}={val}]")
-                inflect_tags = [f"[{f}={v}]" for f, v in sorted(list(feature_values))]
-                combo_tags = lex_tags + inflect_tags
-            else:
-                combo_tags = [f"[{f}={v}]" for f, v in sorted(list(feature_values))]
-            for marker, _ in markers:
-                marker_to_combinations[marker].append(combo_tags)
-
-            # Build the lexical FST preserving alphabetical order of all lexical features.
-            # Unreferenced lexical features are unioned over all their possible values in FST space.
-            lexical_parts = []
-            for fname in lexical_feature_names:
-                if fname in referenced_lexical_features:
-                    val = next(v for f, v in lexical_combo if f == fname)
-                    lexical_parts.append(tag_fsas[f"[{fname}={val}]"])
-                else:
-                    lexical_parts.append(
-                        pynini.union(
-                            *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
-                        )
-                    )
-            if lexical_parts:
-                lexical_fsa = lexical_parts[0]
-                for part in lexical_parts[1:]:
-                    lexical_fsa = pynini.concat(lexical_fsa, part)
-            else:
-                lexical_fsa = None
-
-            inflectional_fsa = get_feature_fsa(feature_values)
-
-            # Gather tag sequences for the tag domain to perform static difference
-            if infer_lexical_features and lexical_fsa:
-                if inflectional_fsa is not None:
-                    tag_seq = pynini.concat(lexical_fsa, inflectional_fsa)
-                else:
-                    tag_seq = lexical_fsa
-            else:
-                tag_seq = inflectional_fsa
-            if tag_seq:
-                tag_seqs.append(tag_seq)
-
-            all_cell_features = list(feature_values) + list(lexical_combo)
-
-            inflect_input = constrained_root_fsa
-            if infer_lexical_features and lexical_fsa:
-                inflect_input = pynini.concat(inflect_input, lexical_fsa)
-
-            if inflectional_fsa is not None:
-                inflect_input = pynini.concat(inflect_input, inflectional_fsa)
-            input_parts.append(inflect_input)
-
+def _compile_stage_cascade(
+    paradigm_name: str,
+    paradigm_data: dict,
+    input_parts: list[pynini.Fst],
+    tag_seqs: list[pynini.Fst],
+    marker_to_combinations: dict,
+    tag_fsas: dict[str, pynini.Fst],
+) -> pynini.Fst:
+    """
+    Compiles the sequential stage-by-stage composition cascade using gated transducers.
+    """
     if not input_parts:
         return pynini.Fst()
 
     cascade_domain = pynini.union(*input_parts).optimize()
-
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
 
     # Group markers by stage
     from collections import defaultdict
-
     stage_to_markers = defaultdict(list)
     for marker in marker_to_combinations.keys():
         stage = getattr(marker, "stage", None)
@@ -438,7 +278,6 @@ def build_inflect_graph_for_root_regex(
             ordered_stages.append(s)
 
     from parC.grammar.acceptor_compilation import get_special_fsas
-
     special_fsas = get_special_fsas()
     phone_fsa = special_fsas["phone"]
     boundary_fsa = special_fsas["boundary"]
@@ -482,6 +321,11 @@ def build_inflect_graph_for_root_regex(
 
             all_stage_trigger_tags.append(marker_trigger_tags)
             base_fst = get_marker_fst(marker)
+            if getattr(marker, "kind", None) == "string_map":
+                tags_list = list(tag_fsas.values())
+                if tags_list:
+                    tags_star = pynini.union(*tags_list).star.optimize()
+                    base_fst = pynini.concat(base_fst, tags_star).optimize()
             trigger_paths.append(pynini.compose(marker_trigger_fsa, base_fst))
 
         stage_trigger_tags = pynini.union(*all_stage_trigger_tags).optimize()
@@ -498,6 +342,247 @@ def build_inflect_graph_for_root_regex(
     cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
 
     return pynini.compose(current_fst, cleanup_fst).optimize()
+
+
+def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
+    """root[features...] → surface form."""
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if paradigm_data is None:
+        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
+
+    feature_map = get_feature_map()
+    roots = get_roots_for_paradigm(paradigm_name=paradigm_name)
+    combos, _, _ = get_feature_combos_for_paradigm(
+        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
+    )
+
+    from collections import defaultdict
+    from parC.lexicon import get_features_for_root
+
+    marker_to_combinations = defaultdict(list)
+    input_parts = []
+    tag_seqs = []
+
+    # Pre-compile tag acceptors to avoid calling fsa(...) repeatedly.
+    tag_fsas = {}
+    for fname, fvals in feature_map.items():
+        for val in fvals:
+            tag_str = f"[{fname}={val}]"
+            tag_fsas[tag_str] = pynini.accep(tag_str, token_type=get_symbol_table())
+
+    def get_feature_fsa(
+        feat_vals: FeatureComboType | dict[str, str],
+    ) -> pynini.Fst | None:
+        if isinstance(feat_vals, (dict, frozendict)):
+            feat_vals = list(feat_vals.items())
+        sorted_feats = sorted(feat_vals)
+        if not sorted_feats:
+            return None
+        parts = [tag_fsas[f"[{f}={v}]"] for f, v in sorted_feats]
+        curr = parts[0]
+        for part in parts[1:]:
+            curr = pynini.concat(curr, part)
+        return curr
+
+    part_of_speech = paradigm_data["part_of_speech"]
+
+    for root in roots:
+        root_fsa = word_fsa(root)
+        lexical_combo = set(get_features_for_root(part_of_speech, root))
+
+        constrained_root_fsa = _apply_feature_acceptor_constraints(
+            root_fsa, lexical_combo
+        )
+        if constrained_root_fsa.num_states() == 0:
+            continue
+
+        for feature_values in combos:
+            constrained_cell_fsa = _apply_feature_acceptor_constraints(
+                constrained_root_fsa, feature_values
+            )
+            if constrained_cell_fsa.num_states() == 0:
+                continue
+
+            try:
+                markers = get_markers_for_paradigm(
+                    feature_values,
+                    paradigm_name,
+                    root=root,
+                    lexical_features=lexical_combo,
+                    include_features=True,
+                    paradigm_data=paradigm_data,
+                )
+            except Exception:
+                continue
+
+            combo_tags = [f"[{f}={v}]" for f, v in sorted(list(feature_values))]
+            for marker, _ in markers:
+                marker_to_combinations[marker].append(combo_tags)
+
+            inflectional_fsa = get_feature_fsa(feature_values)
+            if inflectional_fsa is not None:
+                tag_seqs.append(inflectional_fsa)
+                inflect_input = pynini.concat(constrained_cell_fsa, inflectional_fsa)
+            else:
+                inflect_input = constrained_cell_fsa
+            input_parts.append(inflect_input)
+
+    return _compile_stage_cascade(
+        paradigm_name=paradigm_name,
+        paradigm_data=paradigm_data,
+        input_parts=input_parts,
+        tag_seqs=tag_seqs,
+        marker_to_combinations=marker_to_combinations,
+        tag_fsas=tag_fsas,
+    )
+
+
+def build_inflect_graph_for_root_regex(
+    paradigm_name: str,
+    root_regex: str | pynini.Fst,
+    lexical_features: FeatureComboType | dict[str, str] | None = None,
+    infer_lexical_features: bool = False,
+) -> pynini.Fst:
+    """root_regex[lexical_features][inflectional_features] → surface form."""
+    if isinstance(root_regex, str):
+        root_fsa = fsa(R.bow + root_regex + R.eow)
+    else:
+        root_fsa = root_regex
+
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if paradigm_data is None:
+        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
+
+    feature_map = get_feature_map()
+    combos, _, _ = get_feature_combos_for_paradigm(
+        name=paradigm_name,
+        feature_map=feature_map,
+        kind="Paradigm",
+        paradigm_data=paradigm_data,
+    )
+
+    lexical_combos, referenced_lexical_features, lexical_feature_names = _resolve_lexical_combos(
+        paradigm_data=paradigm_data,
+        feature_map=feature_map,
+        lexical_features=lexical_features,
+        infer_lexical_features=infer_lexical_features,
+    )
+
+    from collections import defaultdict
+    marker_to_combinations = defaultdict(list)
+    input_parts = []
+    tag_seqs = []
+
+    # Pre-compile tag acceptors to avoid calling fsa(...) repeatedly.
+    tag_fsas = {}
+    for fname, fvals in feature_map.items():
+        for val in fvals:
+            tag_str = f"[{fname}={val}]"
+            tag_fsas[tag_str] = pynini.accep(tag_str, token_type=get_symbol_table())
+
+    def get_feature_fsa(
+        feat_vals: FeatureComboType | dict[str, str],
+    ) -> pynini.Fst | None:
+        if isinstance(feat_vals, (dict, frozendict)):
+            feat_vals = list(feat_vals.items())
+        sorted_feats = sorted(feat_vals)
+        if not sorted_feats:
+            return None
+        parts = [tag_fsas[f"[{f}={v}]"] for f, v in sorted_feats]
+        curr = parts[0]
+        for part in parts[1:]:
+            curr = pynini.concat(curr, part)
+        return curr
+
+    for lexical_combo in lexical_combos:
+        constrained_root_fsa = _apply_feature_acceptor_constraints(
+            root_fsa, lexical_combo
+        )
+        if constrained_root_fsa.num_states() == 0:
+            continue
+
+        for feature_values in combos:
+            constrained_cell_fsa = _apply_feature_acceptor_constraints(
+                constrained_root_fsa, feature_values
+            )
+            if constrained_cell_fsa.num_states() == 0:
+                continue
+
+            try:
+                markers = get_markers_for_paradigm(
+                    feature_values,
+                    paradigm_name,
+                    root=None,
+                    lexical_features=lexical_combo,
+                    include_features=True,
+                    paradigm_data=paradigm_data,
+                )
+            except Exception:
+                continue
+
+            if infer_lexical_features:
+                lex_tags = []
+                for fname in lexical_feature_names:
+                    val = next((v for f, v in lexical_combo if f == fname), None)
+                    if val is not None:
+                        lex_tags.append(f"[{fname}={val}]")
+                inflect_tags = [f"[{f}={v}]" for f, v in sorted(list(feature_values))]
+                combo_tags = lex_tags + inflect_tags
+            else:
+                combo_tags = [f"[{f}={v}]" for f, v in sorted(list(feature_values))]
+
+            for marker, _ in markers:
+                marker_to_combinations[marker].append(combo_tags)
+
+            # Build the lexical FST preserving alphabetical order of all lexical features.
+            # Unreferenced lexical features are unioned over all their possible values in FST space.
+            lexical_parts = []
+            for fname in lexical_feature_names:
+                if fname in referenced_lexical_features:
+                    val = next(v for f, v in lexical_combo if f == fname)
+                    lexical_parts.append(tag_fsas[f"[{fname}={val}]"])
+                else:
+                    lexical_parts.append(
+                        pynini.union(
+                            *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                        )
+                    )
+            if lexical_parts:
+                lexical_fsa = lexical_parts[0]
+                for part in lexical_parts[1:]:
+                    lexical_fsa = pynini.concat(lexical_fsa, part)
+            else:
+                lexical_fsa = None
+
+            inflectional_fsa = get_feature_fsa(feature_values)
+
+            # Gather tag sequences for the tag domain to perform static difference
+            if infer_lexical_features and lexical_fsa:
+                if inflectional_fsa is not None:
+                    tag_seq = pynini.concat(lexical_fsa, inflectional_fsa)
+                else:
+                    tag_seq = lexical_fsa
+            else:
+                tag_seq = inflectional_fsa
+            if tag_seq:
+                tag_seqs.append(tag_seq)
+
+            inflect_input = constrained_cell_fsa
+            if infer_lexical_features and lexical_fsa:
+                inflect_input = pynini.concat(inflect_input, lexical_fsa)
+
+            if inflectional_fsa is not None:
+                inflect_input = pynini.concat(inflect_input, inflectional_fsa)
+            input_parts.append(inflect_input)
+
+    return _compile_stage_cascade(
+        paradigm_name=paradigm_name,
+        paradigm_data=paradigm_data,
+        input_parts=input_parts,
+        tag_seqs=tag_seqs,
+        marker_to_combinations=marker_to_combinations,
+        tag_fsas=tag_fsas,
+    )
 
 
 def get_open_parse_graph(paradigm_name: str) -> pynini.Fst:
