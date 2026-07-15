@@ -989,30 +989,11 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
     seen_markers = set()
     try:
         from parC.grammar.transducer_compilation import get_marker_fst_key
+        from parC.grammar.marker_resolution import get_sorted_markers_for_paradigm
 
-        feature_map = get_feature_map()
-        combos, _, _ = get_feature_combos_for_paradigm(
-            name=paradigm_name, feature_map=feature_map, kind="Paradigm"
-        )
-        roots = get_roots_for_paradigm(paradigm_name)
-        for combo in combos:
-            try:
-                markers = get_markers_for_paradigm(combo, paradigm_name, root=None)
-                for marker in markers:
-                    seen_markers.add(marker)
-            except Exception:
-                for root in roots[:5]:
-                    try:
-                        markers = get_markers_for_paradigm(
-                            combo, paradigm_name, root=root
-                        )
-                        for marker in markers:
-                            if isinstance(marker, tuple):
-                                seen_markers.add(marker[0])
-                            else:
-                                seen_markers.add(marker)
-                    except Exception:
-                        pass
+        precomputed = get_sorted_markers_for_paradigm(paradigm_name)
+        for marker, _ in precomputed["all_markers_sorted"]:
+            seen_markers.add(marker)
 
         for marker in seen_markers:
             m_key = get_marker_fst_key(marker)
