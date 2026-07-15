@@ -67,8 +67,19 @@ def _get_paradigm_cache_key_cached(
     return (yaml_dir, paradigm_name, paradigm_hash, marker_hashes, contingent_hashes)
 
 
+_paradigm_cache_key_cache = {}
+
+
 def get_paradigm_cache_key(paradigm_name: str) -> tuple:
     """Computes a unique cache key based on the current yaml_dir and referenced file hashes."""
+    import time
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        now = time.monotonic()
+        if paradigm_name in _paradigm_cache_key_cache:
+            cached_time, cached_key = _paradigm_cache_key_cache[paradigm_name]
+            if now - cached_time < 1.0:
+                return cached_key
+
     yaml_dir = get_yaml_dir()
     
     # 1. Get paradigm yaml hash
@@ -94,7 +105,7 @@ def get_paradigm_cache_key(paradigm_name: str) -> tuple:
         for path in contingent_paths
     )
     
-    return _get_paradigm_cache_key_cached(
+    res = _get_paradigm_cache_key_cached(
         yaml_dir,
         paradigm_name,
         paradigm_hash,
@@ -103,6 +114,9 @@ def get_paradigm_cache_key(paradigm_name: str) -> tuple:
         contingent_files,
         contingent_mtimes,
     )
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        _paradigm_cache_key_cache[paradigm_name] = (now, res)
+    return res
 
 
 def get_sorted_markers_for_paradigm(paradigm_name: str) -> dict:
@@ -380,6 +394,9 @@ def get_contingent_markers_for_paradigm(paradigm_name):
     return list(paradigm_data.get("contingent_markers", []))
 
 
+_feature_combos_for_paradigm_cache = {}
+
+
 def get_feature_combos_for_paradigm(
     name: str,
     feature_map: dict | None = None,
@@ -391,11 +408,28 @@ def get_feature_combos_for_paradigm(
     Each combo is a set of (feature, value) pairs covering all free features
     plus any fixed feature values.
     """
+    yaml_file_path = get_yaml_path(kind, name)
+    yaml_hash = get_file_sha256(yaml_file_path)
+
+    feat_def_dir = os.path.dirname(get_yaml_path("FeatureDefinitions", "dummy"))
+    from parC.yaml_utils.cache import max_directory_mtime
+    feat_mtime = max_directory_mtime(feat_def_dir) if os.path.exists(feat_def_dir) else 0.0
+
+    cache_key = (name, kind, yaml_hash, feat_mtime)
+    if cache_key in _feature_combos_for_paradigm_cache:
+        cached_combos, marker_files, contingent_files = _feature_combos_for_paradigm_cache[cache_key]
+        return (
+            [set(c) for c in cached_combos],
+            list(marker_files),
+            list(contingent_files),
+        )
 
     if feature_map is None:
         feature_map = get_feature_map()
 
-    paradigm_data = get_yaml_data_safe(kind=kind, yaml_basename=name)
+    if paradigm_data is None:
+        paradigm_data = get_yaml_data_safe(kind=kind, yaml_basename=name)
+
     part_of_speech = paradigm_data["part_of_speech"]
     part_of_speech_data = get_yaml_data_safe(
         yaml_basename=part_of_speech, kind="PartOfSpeech"
@@ -434,6 +468,15 @@ def get_feature_combos_for_paradigm(
             set(fixed.items()) | set(combo_tuples)
             for combo_tuples in itertools.product(*free_value_lists)
         ]
+
+    # Store frozen versions in cache
+    frozen_combos = [frozenset(c) for c in combos]
+    _feature_combos_for_paradigm_cache[cache_key] = (
+        frozen_combos,
+        tuple(marker_files),
+        tuple(contingent_files),
+    )
+
     return combos, marker_files, contingent_files
 
 

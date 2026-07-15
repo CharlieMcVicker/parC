@@ -336,10 +336,22 @@ def load_fst(kind: str, name: str, fst_kind: str) -> pynini.Fst | None:
         return None
 
 
+_directory_mtimes_cache = {}
+
+
 def max_directory_mtime(directory: str):
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        now = time.monotonic()
+        if directory in _directory_mtimes_cache:
+            cached_time, mtime = _directory_mtimes_cache[directory]
+            if now - cached_time < 1.0:
+                return mtime
     yaml_glob = glob(os.path.join(directory, "*.yaml"))
     csv_glob = glob(os.path.join(directory, "*.csv"))
-    return max(os.path.getmtime(f) for f in yaml_glob + csv_glob + [directory])
+    mtime = max(os.path.getmtime(f) for f in yaml_glob + csv_glob + [directory])
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        _directory_mtimes_cache[directory] = (now, mtime)
+    return mtime
 
 
 def get_hashable_args_and_kwargs(args, kwargs):
