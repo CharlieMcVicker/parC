@@ -55,6 +55,9 @@ from parC.grammar.marker_resolution import (
     get_fixed_features_for_paradigm,
 )
 
+
+from parC.grammar.transducer_compilation import get_marker_fst
+
 EDIT_BOUND = 5
 EDIT_COST = 1.0
 
@@ -232,7 +235,10 @@ def build_inflect_graph_for_root_regex(
 
     feature_map = get_feature_map()
     combos, _, _ = get_feature_combos_for_paradigm(
-        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
+        name=paradigm_name,
+        feature_map=feature_map,
+        kind="Paradigm",
+        paradigm_data=paradigm_data,
     )
 
     if infer_lexical_features:
@@ -318,6 +324,8 @@ def build_inflect_graph_for_root_regex(
             curr = pynini.concat(curr, part)
         return curr
 
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+
     for lexical_combo in lexical_combos:
         constrained_root_fsa = _apply_feature_acceptor_constraints(
             root_fsa, lexical_combo
@@ -332,6 +340,7 @@ def build_inflect_graph_for_root_regex(
                     root=None,
                     lexical_features=lexical_combo,
                     include_features=True,
+                    paradigm_data=paradigm_data,
                 )
             except Exception as e:
                 # logger.debug(
@@ -400,11 +409,6 @@ def build_inflect_graph_for_root_regex(
 
     cascade_domain = pynini.union(*input_parts).optimize()
 
-    from parC.grammar.transducer_compilation import (
-        get_gated_marker_fst,
-        get_trigger_fsa,
-    )
-
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
 
@@ -453,8 +457,6 @@ def build_inflect_graph_for_root_regex(
         markers = stage_to_markers[stage]
         trigger_paths = []
         all_stage_trigger_tags = []
-
-        from parC.grammar.transducer_compilation import get_marker_fst
 
         for marker in markers:
             combo_tag_lists = marker_to_combinations[marker]

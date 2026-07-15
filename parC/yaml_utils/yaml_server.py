@@ -54,7 +54,6 @@ from parC.yaml_utils.models import (
 
 
 import functools
-import copy
 
 
 @functools.lru_cache(maxsize=1024)
@@ -64,6 +63,8 @@ def _get_yaml_data_safe_cached(kind: str, yaml_basename: str, file_hash: str) ->
         return None
 
     yaml_file_path = get_yaml_path(kind, yaml_basename)
+    if not os.path.exists(yaml_file_path):
+        return None
 
     with open(yaml_file_path, "r", encoding="utf-8") as f:
         yaml_data = yaml.safe_load(f)
@@ -82,13 +83,8 @@ def get_yaml_data_safe(kind: str, yaml_basename: str) -> dict:
     Returns None if the config kind is invalid or the YAML data fails validation,
     else returns the validated YAML data.
     """
-    if kind not in CONFIG_KINDS:
-        logger.error(f"Invalid config kind: {kind}")
-        return None
 
     yaml_file_path = get_yaml_path(kind, yaml_basename)
-    if not os.path.exists(yaml_file_path):
-        return None
 
     from parC.yaml_utils.cache import get_file_sha256
 

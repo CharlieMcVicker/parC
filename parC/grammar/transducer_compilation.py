@@ -29,7 +29,12 @@ from parC.grammar.acceptor_compilation import (
     get_sigma_star,
     get_symbol_table,
 )
-from parC.yaml_utils.cache import observed_cache, compute_cache_key, get_cached_fst, save_cached_fst
+from parC.yaml_utils.cache import (
+    observed_cache,
+    compute_cache_key,
+    get_cached_fst,
+    save_cached_fst,
+)
 
 INVENTORY_DIR = kind_dir("Inventory")
 FEATURES_DIR = kind_dir("FeatureDefinitions")
@@ -143,8 +148,6 @@ def compile_marker(marker: Marker) -> pynini.Fst:
     raise ValueError(f"Unknown marker: {marker!r}")
 
 
-from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
-
 """
 Public API
 """
@@ -152,6 +155,7 @@ Public API
 
 import hashlib
 import json
+
 
 def get_rule_fst_key(rule_name: str) -> str:
     rule_name = rule_name.removeprefix("$")
@@ -168,9 +172,12 @@ def get_rule_fst_key(rule_name: str) -> str:
         for sub_rule_name in rule.rule_sequence:
             child_keys[f"Rule/{sub_rule_name}"] = get_rule_fst_key(sub_rule_name)
     from parC.grammar.acceptor_compilation import get_symbol_table_key
+
     child_keys["symbol_table"] = get_symbol_table_key()
     description = f"Rule '{rule_name}' ({rule})" if rule else f"Rule '{rule_name}'"
-    return compute_cache_key(rule_name, "Rule", config_dirs, child_keys, description=description)
+    return compute_cache_key(
+        rule_name, "Rule", config_dirs, child_keys, description=description
+    )
 
 
 def get_marker_fst_key(marker: Marker) -> str:
@@ -187,14 +194,21 @@ def get_marker_fst_key(marker: Marker) -> str:
         rule_name = marker.value.removeprefix("$")
         child_keys[f"Rule/{rule_name}"] = get_rule_fst_key(rule_name)
     from parC.grammar.acceptor_compilation import get_symbol_table_key
+
     child_keys["symbol_table"] = get_symbol_table_key()
-    
+
     marker_dict = marker._asdict()
     marker_json = json.dumps(marker_dict, sort_keys=True)
     marker_hash = hashlib.sha256(marker_json.encode("utf-8")).hexdigest()
-    
+
     description = f"Marker {marker}"
-    return compute_cache_key(f"marker_{marker_hash}", "Marker", config_dirs, child_keys, description=description)
+    return compute_cache_key(
+        f"marker_{marker_hash}",
+        "Marker",
+        config_dirs,
+        child_keys,
+        description=description,
+    )
 
 
 @observed_cache(
@@ -255,7 +269,9 @@ def get_marker_fst(marker: Marker) -> pynini.Fst:
     return compiled
 
 
-def get_trigger_fsa(trigger_tags: list[str] | tuple[str, ...], syms, sigma_star) -> pynini.Fst:
+def get_trigger_fsa(
+    trigger_tags: list[str] | tuple[str, ...], syms, sigma_star
+) -> pynini.Fst:
     """Helper to build a trigger acceptor that matches strings containing all trigger tags in order."""
     if not trigger_tags:
         return sigma_star
@@ -263,32 +279,33 @@ def get_trigger_fsa(trigger_tags: list[str] | tuple[str, ...], syms, sigma_star)
     parts = []
     for tag in sorted_tags:
         parts.append(pynini.accep(tag, token_type=syms))
-    
+
     seq = parts[0]
     for part in parts[1:]:
         seq = pynini.concat(seq, part)
-        
+
     return pynini.concat(sigma_star, pynini.concat(seq, sigma_star)).optimize()
 
 
-def compile_gated_marker(marker: Marker, trigger_tags: list[str] | tuple[str, ...]) -> pynini.Fst:
+def compile_gated_marker(
+    marker: Marker, trigger_tags: list[str] | tuple[str, ...]
+) -> pynini.Fst:
     """Compiles a marker that only applies if the input string contains all trigger_tags."""
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
-    
+
     base_fst = get_marker_fst(marker)
-    
+
     if not trigger_tags:
         return base_fst
-        
+
     trigger_fsa = get_trigger_fsa(trigger_tags, syms, sigma_star)
     non_trigger_fsa = pynini.difference(sigma_star, trigger_fsa).optimize()
-    
+
     gated_fst = pynini.union(
-        pynini.compose(trigger_fsa, base_fst),
-        non_trigger_fsa
+        pynini.compose(trigger_fsa, base_fst), non_trigger_fsa
     ).optimize()
-    
+
     return gated_fst
 
 
@@ -296,7 +313,7 @@ def get_gated_marker_fst_key(marker: Marker, trigger_tags: tuple[str, ...]) -> s
     marker_key = get_marker_fst_key(marker)
     tags_str = ",".join(sorted(trigger_tags))
     tags_hash = hashlib.sha256(tags_str.encode("utf-8")).hexdigest()
-    
+
     config_dirs = [
         kind_dir("Rules"),
         kind_dir("Patterns"),
@@ -307,7 +324,13 @@ def get_gated_marker_fst_key(marker: Marker, trigger_tags: tuple[str, ...]) -> s
     ]
     child_keys = {"marker": marker_key}
     description = f"GatedMarker {marker} (gated by tags: {trigger_tags})"
-    return compute_cache_key(f"gated_marker_{tags_hash}", "GatedMarker", config_dirs, child_keys, description=description)
+    return compute_cache_key(
+        f"gated_marker_{tags_hash}",
+        "GatedMarker",
+        config_dirs,
+        child_keys,
+        description=description,
+    )
 
 
 @observed_cache(
@@ -328,4 +351,3 @@ def get_gated_marker_fst(marker: Marker, trigger_tags: tuple[str, ...]) -> pynin
     compiled = compile_gated_marker(marker, trigger_tags)
     save_cached_fst(cache_key, compiled)
     return compiled
-

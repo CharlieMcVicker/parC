@@ -8,7 +8,7 @@ from parC.constants import get_yaml_dir
 from functools import lru_cache, wraps
 from glob import glob
 from frozendict import frozendict
-
+import functools
 
 CACHE_DIR = os.path.join(get_yaml_dir(), ".cache")
 _SYMS_PATH = os.path.join(CACHE_DIR, "symbol_table.syms")
@@ -19,14 +19,23 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 # SHA-256 Dependency-Graph Caching System
 # ----------------------------------------------------
 
-def get_file_sha256(path: str) -> str:
-    if not os.path.exists(path):
-        return ""
+
+@functools.lru_cache(maxsize=1024)
+def read_and_sha256_file(path: str, _mstat: float):
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def get_file_sha256(path: str) -> str:
+    if not os.path.exists(path):
+        return ""
+    # grab mstat last edit date of file to ensure cached hashes are invalidated when file contents change
+    mstat = os.path.getmtime(path)
+    return read_and_sha256_file(path, mstat)
+
 
 def get_dir_sha256(directory_path: str) -> str:
     if not os.path.exists(directory_path):
@@ -43,7 +52,14 @@ def get_dir_sha256(directory_path: str) -> str:
         h.update(get_file_sha256(f).encode("utf-8"))
     return h.hexdigest()
 
-def compute_cache_key(name: str, kind: str, config_dirs: list[str], child_keys: dict[str, str] = None, description: str = None) -> str:
+
+def compute_cache_key(
+    name: str,
+    kind: str,
+    config_dirs: list[str],
+    child_keys: dict[str, str] = None,
+    description: str = None,
+) -> str:
     if child_keys is None:
         child_keys = {}
     config_hashes = {}
@@ -55,22 +71,24 @@ def compute_cache_key(name: str, kind: str, config_dirs: list[str], child_keys: 
         "name": name,
         "kind": kind,
         "config_dependencies": config_hashes,
-        "child_fst_dependencies": {k: child_keys[k] for k in sorted(child_keys.keys())}
+        "child_fst_dependencies": {k: child_keys[k] for k in sorted(child_keys.keys())},
     }
     if description is not None:
         metadata["description"] = description
-        
+
     metadata_json = json.dumps(metadata, sort_keys=True)
     cache_key = hashlib.sha256(metadata_json.encode("utf-8")).hexdigest()
-    
+
     meta_path = os.path.join(CACHE_DIR, f"{cache_key}.meta")
     if not os.path.exists(meta_path):
         with open(meta_path, "w", encoding="utf-8") as f:
             f.write(metadata_json)
-            
+
     return cache_key
 
+
 _compile_starts = {}
+
 
 def record_cache_miss(cache_key: str) -> None:
     if cache_key in _compile_starts:
@@ -90,11 +108,13 @@ def record_cache_miss(cache_key: str) -> None:
     logger.debug(f"Building {desc}...")
     _compile_starts[cache_key] = (time.time(), desc)
 
+
 def record_cache_save(cache_key: str) -> None:
     if cache_key in _compile_starts:
         start_time, desc = _compile_starts.pop(cache_key)
         duration = time.time() - start_time
         logger.debug(f"Building {desc}... (done {duration:.1f}sec)")
+
 
 def get_cached_fst(cache_key: str) -> pynini.Fst | list[pynini.Fst] | None:
     meta_path = os.path.join(CACHE_DIR, f"{cache_key}.meta")
@@ -112,17 +132,23 @@ def get_cached_fst(cache_key: str) -> pynini.Fst | list[pynini.Fst] | None:
             for i in range(metadata.get("sequence_len", 0)):
                 path = os.path.join(CACHE_DIR, f"{cache_key}_seq_{i}.fst")
                 if not os.path.exists(path):
-                    logger.debug(f"FST cache MISS for key {cache_key}: missing sequence FST at index {i}")
+                    logger.debug(
+                        f"FST cache MISS for key {cache_key}: missing sequence FST at index {i}"
+                    )
                     record_cache_miss(cache_key)
                     return None
                 fsts.append(pynini.Fst.read(path))
-            logger.debug(f"FST cache HIT for key {cache_key} (Kind: {kind}, Name: {name})")
+            logger.debug(
+                f"FST cache HIT for key {cache_key} (Kind: {kind}, Name: {name})"
+            )
             return fsts
         else:
             fst_path = os.path.join(CACHE_DIR, f"{cache_key}.fst")
             if os.path.exists(fst_path):
                 fst = pynini.Fst.read(fst_path)
-                logger.debug(f"FST cache HIT for key {cache_key} (Kind: {kind}, Name: {name})")
+                logger.debug(
+                    f"FST cache HIT for key {cache_key} (Kind: {kind}, Name: {name})"
+                )
                 return fst
             else:
                 logger.debug(f"FST cache MISS for key {cache_key}: .fst file not found")
@@ -131,6 +157,7 @@ def get_cached_fst(cache_key: str) -> pynini.Fst | list[pynini.Fst] | None:
         logger.warning(f"Failed to load cached FST for key {cache_key}: {e}")
         record_cache_miss(cache_key)
     return None
+
 
 def save_cached_fst(cache_key: str, fst: pynini.Fst | list[pynini.Fst]) -> None:
     meta_path = os.path.join(CACHE_DIR, f"{cache_key}.meta")
@@ -159,6 +186,7 @@ def save_cached_fst(cache_key: str, fst: pynini.Fst | list[pynini.Fst]) -> None:
         fst.write(fst_path)
     record_cache_save(cache_key)
 
+
 def get_cached_pattern_fsts(cache_key: str) -> dict[str, pynini.Fst] | None:
     meta_path = os.path.join(CACHE_DIR, f"{cache_key}.meta")
     if not os.path.exists(meta_path):
@@ -170,7 +198,9 @@ def get_cached_pattern_fsts(cache_key: str) -> dict[str, pynini.Fst] | None:
             metadata = json.load(f)
         pattern_names = metadata.get("pattern_names", [])
         if not pattern_names:
-            logger.debug(f"Pattern FST cache MISS for key {cache_key}: no pattern names in meta")
+            logger.debug(
+                f"Pattern FST cache MISS for key {cache_key}: no pattern names in meta"
+            )
             record_cache_miss(cache_key)
             return None
         pattern_fsts = {}
@@ -178,18 +208,25 @@ def get_cached_pattern_fsts(cache_key: str) -> dict[str, pynini.Fst] | None:
             safe_name = name.replace("<", "").replace(">", "").replace("/", "_")
             fst_path = os.path.join(CACHE_DIR, f"{cache_key}_pattern_{safe_name}.fst")
             if not os.path.exists(fst_path):
-                logger.debug(f"Pattern FST cache MISS for key {cache_key}: missing FST for pattern {name}")
+                logger.debug(
+                    f"Pattern FST cache MISS for key {cache_key}: missing FST for pattern {name}"
+                )
                 record_cache_miss(cache_key)
                 return None
             pattern_fsts[name] = pynini.Fst.read(fst_path)
-        logger.debug(f"Pattern FST cache HIT for key {cache_key} ({len(pattern_names)} patterns)")
+        logger.debug(
+            f"Pattern FST cache HIT for key {cache_key} ({len(pattern_names)} patterns)"
+        )
         return pattern_fsts
     except Exception as e:
         logger.warning(f"Failed to load cached pattern FSTs for key {cache_key}: {e}")
         record_cache_miss(cache_key)
     return None
 
-def save_cached_pattern_fsts(cache_key: str, pattern_fsts: dict[str, pynini.Fst]) -> None:
+
+def save_cached_pattern_fsts(
+    cache_key: str, pattern_fsts: dict[str, pynini.Fst]
+) -> None:
     meta_path = os.path.join(CACHE_DIR, f"{cache_key}.meta")
     if os.path.exists(meta_path):
         try:
@@ -202,7 +239,7 @@ def save_cached_pattern_fsts(cache_key: str, pattern_fsts: dict[str, pynini.Fst]
     metadata["pattern_names"] = list(pattern_fsts.keys())
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(metadata, f, sort_keys=True)
-        
+
     for name, fst in pattern_fsts.items():
         safe_name = name.replace("<", "").replace(">", "").replace("/", "_")
         fst_path = os.path.join(CACHE_DIR, f"{cache_key}_pattern_{safe_name}.fst")
@@ -211,6 +248,7 @@ def save_cached_pattern_fsts(cache_key: str, pattern_fsts: dict[str, pynini.Fst]
         except Exception as e:
             logger.warning(f"Failed to save pattern FST {name} to {fst_path}: {e}")
     record_cache_save(cache_key)
+
 
 def get_cached_symbol_table(cache_key: str) -> pynini.SymbolTable | None:
     syms_path = os.path.join(CACHE_DIR, f"{cache_key}.syms")
@@ -224,6 +262,7 @@ def get_cached_symbol_table(cache_key: str) -> pynini.SymbolTable | None:
     logger.debug(f"Symbol table cache MISS for key {cache_key}")
     return None
 
+
 def save_cached_symbol_table(cache_key: str, syms: pynini.SymbolTable) -> None:
     syms_path = os.path.join(CACHE_DIR, f"{cache_key}.syms")
     try:
@@ -231,12 +270,15 @@ def save_cached_symbol_table(cache_key: str, syms: pynini.SymbolTable) -> None:
     except Exception as e:
         logger.warning(f"Failed to save symbol table to cache path {syms_path}: {e}")
 
+
 # ----------------------------------------------------
 # Compatibility / Legacy Caching Interface
 # ----------------------------------------------------
 
+
 def _fst_path(kind: str, name: str, fst_kind: str) -> str:
     return os.path.join(CACHE_DIR, kind, f"{name}.{fst_kind}.fst")
+
 
 def _is_valid(path: str, *source_dirs: str) -> bool:
     if not os.path.exists(path):
@@ -248,20 +290,24 @@ def _is_valid(path: str, *source_dirs: str) -> bool:
         glob_list.extend(glob(os.path.join(source_dir, "*.csv")))
     return all(mtime >= os.path.getmtime(file) for file in glob_list)
 
+
 def is_syms_cache_valid(*source_dirs: str) -> bool:
     if _is_valid(_SYMS_PATH, *source_dirs):
         return True
     logger.info("Symbol table cache invalidated.")
     return False
 
+
 def is_fst_cache_valid(kind: str, name: str, fst_kind: str, *source_dirs: str) -> bool:
     if _is_valid(_fst_path(kind, name, fst_kind), *source_dirs):
         return True
     logger.info(f"Fst of kind {kind} {fst_kind} for {name} invalidated.")
 
+
 def save_symbol_table(syms: pynini.SymbolTable) -> None:
     os.makedirs(CACHE_DIR, exist_ok=True)
     syms.write(_SYMS_PATH)
+
 
 def load_symbol_table() -> pynini.SymbolTable | None:
     if not os.path.exists(_SYMS_PATH):
@@ -272,10 +318,12 @@ def load_symbol_table() -> pynini.SymbolTable | None:
         logger.warning(f"Failed to load symbol table from {_SYMS_PATH}")
         return None
 
+
 def save_fst(kind: str, name: str, fst_kind: str, fst: pynini.Fst) -> None:
     path = _fst_path(kind, name, fst_kind)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fst.write(path)
+
 
 def load_fst(kind: str, name: str, fst_kind: str) -> pynini.Fst | None:
     path = _fst_path(kind, name, fst_kind)
@@ -287,10 +335,12 @@ def load_fst(kind: str, name: str, fst_kind: str) -> pynini.Fst | None:
         logger.warning(f"Failed to load FST from {path}")
         return None
 
+
 def max_directory_mtime(directory: str):
     yaml_glob = glob(os.path.join(directory, "*.yaml"))
     csv_glob = glob(os.path.join(directory, "*.csv"))
     return max(os.path.getmtime(f) for f in yaml_glob + csv_glob + [directory])
+
 
 def get_hashable_args_and_kwargs(args, kwargs):
     hashable_args = []
@@ -322,6 +372,7 @@ def get_hashable_args_and_kwargs(args, kwargs):
         hashable_kwargs[key] = hashable_value
 
     return hashable_args, hashable_kwargs
+
 
 def observed_cache(directories: list[str]):
     directory_mtimes = {

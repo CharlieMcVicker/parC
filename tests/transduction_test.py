@@ -240,7 +240,7 @@ def test_contingent_lexical_submapping():
 
 
 def test_build_inflect_graph_for_root_regex():
-    from parC.grammar.transducer_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
     from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
     from parC.fst_utils import stringify_features
     import pynini
@@ -270,7 +270,7 @@ def test_build_inflect_graph_for_root_regex():
 def test_build_inflect_graph_for_root_regex_with_lexical_features():
     from parC.constants import get_yaml_dir
     from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
-    from parC.grammar.transducer_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
     from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
     from parC.fst_utils import stringify_features
     import yaml
@@ -373,9 +373,8 @@ def test_build_inflect_graph_for_root_regex_with_lexical_features():
 def test_build_inflect_graph_for_root_regex_lexical_inference():
     from parC.constants import get_yaml_dir
     from parC.yaml_utils.yaml_server import get_yaml_data_safe, get_feature_map
-    from parC.grammar.transducer_compilation import build_inflect_graph_for_root_regex
-    from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
-    from parC.fst_utils import stringify_features
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
     import yaml
     import pynini
 
@@ -529,7 +528,6 @@ def test_parse_with_inverted_open_root_graph():
         and "[mood=indicative]" in s
         for s in parse_strs_cant
     )
-
 
 
 def test_feature_value_acceptors():

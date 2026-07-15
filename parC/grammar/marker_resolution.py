@@ -22,6 +22,7 @@ from parC.yaml_utils.models import (
 )
 from parC.yaml_utils.yaml_server import get_markers, get_yaml_data_safe, get_feature_map
 import itertools
+import functools
 from frozendict import frozendict
 
 FeatureComboType = set[tuple[str, str]]
@@ -29,19 +30,29 @@ FeatureComboType = set[tuple[str, str]]
 
 _markers_for_paradigm_cache = {}
 
+
 def get_markers_for_paradigm(
     feature_values: FeatureComboType | dict[str, str],
     paradigm_name: str,
     include_features: bool = False,
     root: str | None = None,
     lexical_features: FeatureComboType | dict[str, str] | None = None,
+    paradigm_data: dict = None,
 ) -> list[Marker] | list[tuple[Marker, FeatureComboType | str]]:
     """
     Get all markers for a requested feature set for a given paradigm.
     Resolves principal_part markers into StringMapMarker using the paradigm's lexicon.
     """
-    fv_key = frozenset(feature_values.items()) if isinstance(feature_values, (dict, frozendict)) else frozenset(feature_values)
-    lex_key = frozenset(lexical_features.items()) if isinstance(lexical_features, (dict, frozendict)) else (frozenset(lexical_features) if lexical_features else frozenset())
+    fv_key = (
+        frozenset(feature_values.items())
+        if isinstance(feature_values, (dict, frozendict))
+        else frozenset(feature_values)
+    )
+    lex_key = (
+        frozenset(lexical_features.items())
+        if isinstance(lexical_features, (dict, frozendict))
+        else (frozenset(lexical_features) if lexical_features else frozenset())
+    )
     cache_key = (fv_key, paradigm_name, include_features, root, lex_key)
     if cache_key in _markers_for_paradigm_cache:
         return list(_markers_for_paradigm_cache[cache_key])
@@ -51,11 +62,12 @@ def get_markers_for_paradigm(
     # avoid side effects
     feature_values = feature_values.copy()
 
-    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if paradigm_data is None:
+        paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
 
     # ignore fixed features
     fixed_features = get_fixed_features_for_paradigm(
-        name=paradigm_name, kind="Paradigm"
+        name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
     )
     feature_values -= fixed_features
 
@@ -150,9 +162,10 @@ def get_markers_for_paradigm(
 
 
 def get_fixed_features_for_paradigm(
-    name: str, kind: str = "Paradigm"
+    name: str, kind: str = "Paradigm", paradigm_data: dict = None
 ) -> FeatureComboType:
-    paradigm_data = get_yaml_data_safe(kind=kind, yaml_basename=name)
+    if paradigm_data is None:
+        paradigm_data = get_yaml_data_safe(kind=kind, yaml_basename=name)
     fixed_features = set()
     for feature, value in paradigm_data["feature_markers"].items():
         if isinstance(value, str) and not value.startswith("$"):
@@ -177,10 +190,17 @@ def get_free_features_for_paradigm(name: str, kind: str = "Paradigm") -> list[st
     return free_features
 
 
+@functools.lru_cache(maxsize=200)
+def get_contingent_markers_for_paradigm(paradigm_name):
+    paradigm_data = get_yaml_data_safe(kind="Paradigm", yaml_basename=paradigm_name)
+    return list(paradigm_data.get("contingent_markers", []))
+
+
 def get_feature_combos_for_paradigm(
     name: str,
     feature_map: dict | None = None,
     kind: str = "Paradigm",
+    paradigm_data=None,
 ) -> tuple[list[FeatureComboType], list[str], list[str]]:
     """
     Return valid feature combos for a paradigm.
@@ -214,7 +234,7 @@ def get_feature_combos_for_paradigm(
             if feature_name in free_feature_names:
                 free_feature_names.remove(feature_name)
 
-    contingent_files = list(paradigm_data.get("contingent_markers", []))
+    contingent_files = get_contingent_markers_for_paradigm(name)
 
     free_value_lists = []
     for fname in free_feature_names:
