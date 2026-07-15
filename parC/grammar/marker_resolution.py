@@ -25,6 +25,7 @@ from parC.constants import get_yaml_dir
 from parC.yaml_utils.cache import get_file_sha256
 import itertools
 import functools
+import os
 from frozendict import frozendict
 
 FeatureComboType = set[tuple[str, str]]
@@ -34,33 +35,74 @@ _markers_for_paradigm_cache = {}
 _precomputed_paradigm_markers_cache = {}
 
 
+@functools.lru_cache(maxsize=1024)
+def _get_paradigm_references(paradigm_name: str, paradigm_mtime: float) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if paradigm_data is None:
+        return ((), ())
+    _, marker_files, contingent_files = get_feature_combos_for_paradigm(
+        name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
+    )
+    return tuple(sorted(marker_files)), tuple(sorted(contingent_files))
+
+
+@functools.lru_cache(maxsize=1024)
+def _get_paradigm_cache_key_cached(
+    yaml_dir: str,
+    paradigm_name: str,
+    paradigm_hash: str,
+    marker_files: tuple[str, ...],
+    marker_mtimes: tuple[float, ...],
+    contingent_files: tuple[str, ...],
+    contingent_mtimes: tuple[float, ...],
+) -> tuple:
+    marker_hashes = tuple(
+        get_file_sha256(get_yaml_path("FeatureMarkers", f))
+        for f in marker_files
+    )
+    contingent_hashes = tuple(
+        get_file_sha256(get_yaml_path("ContingentFeatureMarkers", f))
+        for f in contingent_files
+    )
+    return (yaml_dir, paradigm_name, paradigm_hash, marker_hashes, contingent_hashes)
+
+
 def get_paradigm_cache_key(paradigm_name: str) -> tuple:
     """Computes a unique cache key based on the current yaml_dir and referenced file hashes."""
     yaml_dir = get_yaml_dir()
     
     # 1. Get paradigm yaml hash
     paradigm_path = get_yaml_path("Paradigm", paradigm_name)
+    if not os.path.exists(paradigm_path):
+        return (yaml_dir, paradigm_name, "", (), ())
+        
+    paradigm_mtime = os.path.getmtime(paradigm_path)
     paradigm_hash = get_file_sha256(paradigm_path)
     
     # 2. Get hashes of referenced marker files
-    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-    if paradigm_data is None:
-        return (yaml_dir, paradigm_name, "", (), ())
-        
-    _, marker_files, contingent_files = get_feature_combos_for_paradigm(
-        name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
+    marker_files, contingent_files = _get_paradigm_references(paradigm_name, paradigm_mtime)
+    
+    marker_paths = [get_yaml_path("FeatureMarkers", f) for f in marker_files]
+    marker_mtimes = tuple(
+        os.path.getmtime(path) if os.path.exists(path) else 0.0
+        for path in marker_paths
     )
     
-    marker_hashes = tuple(
-        get_file_sha256(get_yaml_path("FeatureMarkers", f))
-        for f in sorted(marker_files)
-    )
-    contingent_hashes = tuple(
-        get_file_sha256(get_yaml_path("ContingentFeatureMarkers", f))
-        for f in sorted(contingent_files)
+    contingent_paths = [get_yaml_path("ContingentFeatureMarkers", f) for f in contingent_files]
+    contingent_mtimes = tuple(
+        os.path.getmtime(path) if os.path.exists(path) else 0.0
+        for path in contingent_paths
     )
     
-    return (yaml_dir, paradigm_name, paradigm_hash, marker_hashes, contingent_hashes)
+    return _get_paradigm_cache_key_cached(
+        yaml_dir,
+        paradigm_name,
+        paradigm_hash,
+        marker_files,
+        marker_mtimes,
+        contingent_files,
+        contingent_mtimes,
+    )
 
 
 def get_sorted_markers_for_paradigm(paradigm_name: str) -> dict:
