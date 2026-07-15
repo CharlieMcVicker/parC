@@ -632,6 +632,29 @@ def test_feature_value_acceptors():
         # Should be filtered out, meaning empty FST / 0 states
         assert inf_invalid.num_states() == 0
 
+        # Test get_open_parse_graph with non_deterministic_cleanup and infer_lexical_features
+        from parC.grammar.paradigm_compilation import get_open_parse_graph
+        open_parse_graph = get_open_parse_graph(
+            "acceptor_test_paradigm",
+            non_deterministic_cleanup=True,
+            infer_lexical_features=True,
+        )
+        assert isinstance(open_parse_graph, pynini.Fst)
+
+        # Parse evla-test
+        input_fsa = word_fsa("evla-test")
+        output_lattice = pynini.compose(input_fsa, open_parse_graph).optimize()
+        output_lattice = pynini.project(output_lattice, project_type="output")
+        parses = fsm_strings(output_lattice, strip_all_tags=False)
+
+        # Verify that the parsed string contains the inferred lexical feature [acceptor_prefix_class=e_stem]
+        has_lexical = False
+        for p in parses:
+            if "[acceptor_prefix_class=e_stem]" in p:
+                has_lexical = True
+                break
+        assert has_lexical, f"Expected parse to infer and contain lexical feature [acceptor_prefix_class=e_stem], got: {parses}"
+
     finally:
         # Clean up temporary test files
         csv_file = os.path.join(
@@ -654,3 +677,98 @@ def test_feature_value_acceptors():
         get_feature_acceptor_fsts.cache_clear()
         get_pattern_fsts.cache_clear()
         get_symbol_table.cache_clear()
+
+
+def test_non_deterministic_cleanup():
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
+    from parC.fst_utils import stringify_features
+    import pynini
+
+    paradigm_name = "verb_a_stem"
+    root_pattern = "cant"
+
+    # 1. Compile with non_deterministic_cleanup=False (default)
+    inflect_graph_det = build_inflect_graph_for_root_regex(
+        paradigm_name, root_pattern, non_deterministic_cleanup=False
+    )
+    feature_values = {
+        "person_number": "2sg",
+        "tense": "present",
+        "mood": "indicative",
+    }
+    feature_str = stringify_features(feature_values)
+    input_fsa = pynini.concat(word_fsa("cant"), fsa(feature_str))
+
+    output_det = pynini.compose(input_fsa, inflect_graph_det).optimize()
+    output_det = pynini.project(output_det, project_type="output")
+    det_strings = fsm_strings(output_det, strip_all_tags=False)
+    for s in det_strings:
+        assert "[person_number=2sg]" not in s
+        assert "[tense=present]" not in s
+        assert "[mood=indicative]" not in s
+
+    # 2. Compile with non_deterministic_cleanup=True
+    inflect_graph_nd = build_inflect_graph_for_root_regex(
+        paradigm_name, root_pattern, non_deterministic_cleanup=True
+    )
+    output_nd = pynini.compose(input_fsa, inflect_graph_nd).optimize()
+    output_nd = pynini.project(output_nd, project_type="output")
+    nd_strings = fsm_strings(output_nd, strip_all_tags=False)
+
+    has_tags = False
+    for s in nd_strings:
+        if "[person_number=2sg]" in s or "[tense=present]" in s or "[mood=indicative]" in s:
+            has_tags = True
+            break
+    assert has_tags, f"Expected some output strings in {nd_strings} to retain tags when non-deterministic cleanup is active"
+
+    has_fully_clean = False
+    for s in nd_strings:
+        if "[person_number=2sg]" not in s and "[tense=present]" not in s and "[mood=indicative]" not in s:
+            has_fully_clean = True
+            break
+    assert has_fully_clean, f"Expected at least one fully cleaned string in {nd_strings}"
+
+
+def test_parse_with_retained_tags():
+    from parC.grammar.paradigm_compilation import get_open_parse_graph
+    from parC.grammar.acceptor_compilation import word_fsa, fsa, fsm_strings
+    import pynini
+
+    paradigm_name = "verb_a_stem"
+
+    # 1. Compile open parse graph with non_deterministic_cleanup=True
+    open_parse_graph = get_open_parse_graph(paradigm_name, non_deterministic_cleanup=True)
+    assert isinstance(open_parse_graph, pynini.Fst)
+
+    # 2. Case A: Input is just the surface form "cant-as"
+    input_fsa_no_tags = word_fsa("cant-as")
+    output_lattice_no_tags = pynini.compose(input_fsa_no_tags, open_parse_graph).optimize()
+    output_lattice_no_tags = pynini.project(output_lattice_no_tags, project_type="output")
+    parses_no_tags = fsm_strings(output_lattice_no_tags, strip_all_tags=False)
+
+    expected_parse = "[BOW]cant[EOW][mood=indicative][person_number=2sg][tense=present]"
+    assert expected_parse in parses_no_tags
+
+    # 3. Case B: Input has a retained feature tag: "cant-as [person_number=2sg]"
+    input_fsa_with_tag = pynini.concat(word_fsa("cant-as"), fsa("[person_number=2sg]"))
+    output_lattice_with_tag = pynini.compose(input_fsa_with_tag, open_parse_graph).optimize()
+    output_lattice_with_tag = pynini.project(output_lattice_with_tag, project_type="output")
+    parses_with_tag = fsm_strings(output_lattice_with_tag, strip_all_tags=False)
+
+    assert expected_parse in parses_with_tag
+
+
+def test_open_parse_with_inferred_lexical_features():
+    from parC.grammar.paradigm_compilation import get_open_parse_graph
+    import pynini
+
+    paradigm_name = "verb_a_stem"
+    open_parse_graph = get_open_parse_graph(
+        paradigm_name, non_deterministic_cleanup=True, infer_lexical_features=True
+    )
+    assert isinstance(open_parse_graph, pynini.Fst)
+
+
+

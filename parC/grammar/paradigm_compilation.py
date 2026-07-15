@@ -440,15 +440,7 @@ def _compile_stage_cascade(
 
     logger.info(f"[PERF][stage cascade] stages composed")
 
-    # Cleanup Tags
-    delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) for t in tag_fsas])
-    cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
-
-    res = pynini.compose(composed_fst, cleanup_fst).optimize()
-
-    logger.info(f"[PERF][stage cascade] cleanup filters applied")
-
-    return res
+    return composed_fst
 
 
 @functools.lru_cache(maxsize=128)
@@ -508,6 +500,7 @@ def _compile_inflect_graph_shared(
     cache_key: str = None,
     is_open_root: bool = False,
     base_cache_key: str = None,
+    non_deterministic_cleanup: bool = False,
 ) -> pynini.Fst:
     from collections import defaultdict
 
@@ -681,8 +674,20 @@ def _compile_inflect_graph_shared(
         marker_to_combinations=marker_to_combinations,
         tag_fsas=tag_fsas,
         ordered_features=ordered_features,
-        cache_key=base_cache_key if base_cache_key else cache_key,
+        cache_key=(f"{base_cache_key}_infer" if infer_lexical_features else base_cache_key) if base_cache_key else cache_key,
     )
+
+    # Cleanup Tags
+    sigma_star = get_sigma_star()
+    if non_deterministic_cleanup:
+        delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) | tag_fsas[t] for t in tag_fsas])
+    else:
+        delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) for t in tag_fsas])
+    cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
+
+    res = pynini.compose(res, cleanup_fst).optimize()
+
+    logger.info(f"[PERF][stage cascade] cleanup filters applied")
 
     if cache_key and is_open_root:
         save_cached_fst(f"{cache_key}_open_inflect", res)
@@ -735,6 +740,7 @@ def build_inflect_graph_for_root_regex(
     lexical_features: FeatureComboType | dict[str, str] | None = None,
     infer_lexical_features: bool = False,
     cache_key: str = None,
+    non_deterministic_cleanup: bool = False,
 ) -> pynini.Fst:
     """root_regex[lexical_features][inflectional_features] → surface form."""
     is_open_root = root_regex == "<Phone>*"
@@ -747,6 +753,8 @@ def build_inflect_graph_for_root_regex(
         settings = []
         if infer_lexical_features:
             settings.append("infer")
+        if non_deterministic_cleanup:
+            settings.append("nd_cleanup")
         if lexical_features:
             import hashlib
 
@@ -821,17 +829,28 @@ def build_inflect_graph_for_root_regex(
         cache_key=cache_key,
         is_open_root=is_open_root,
         base_cache_key=base_cache_key,
+        non_deterministic_cleanup=non_deterministic_cleanup,
     )
 
 
-def get_open_parse_graph(paradigm_name: str) -> pynini.Fst:
+def get_open_parse_graph(
+    paradigm_name: str,
+    non_deterministic_cleanup: bool = False,
+    infer_lexical_features: bool = False,
+) -> pynini.Fst:
     """
     Returns an open parse graph for the given paradigm by building the inflect graph
     with '<Phone>*' as the root regex and inverting it.
     Uses yaml_dir/config dependency aware caching for the open parse graph and its subcomponents.
     """
     cache_key = get_paradigm_cache_key(paradigm_name)
-    open_parse_key = f"{cache_key}_open_parse"
+    suffix_parts = []
+    if infer_lexical_features:
+        suffix_parts.append("infer")
+    if non_deterministic_cleanup:
+        suffix_parts.append("nd_cleanup")
+    suffix = f"_{'_'.join(suffix_parts)}" if suffix_parts else ""
+    open_parse_key = f"{cache_key}_open_parse{suffix}"
 
     open_parse = get_cached_fst(open_parse_key)
     if open_parse is not None:
@@ -839,11 +858,15 @@ def get_open_parse_graph(paradigm_name: str) -> pynini.Fst:
         return open_parse
 
     logger.debug(f"Open parse graph cache MISS for paradigm {paradigm_name}")
-    open_inflect_key = f"{cache_key}_open_inflect"
+    open_inflect_key = f"{cache_key}_open_inflect{suffix}"
     open_inflect = get_cached_fst(open_inflect_key)
     if open_inflect is None:
         open_inflect = build_inflect_graph_for_root_regex(
-            paradigm_name, "<Phone>*", cache_key=cache_key
+            paradigm_name,
+            "<Phone>*",
+            cache_key=cache_key,
+            non_deterministic_cleanup=non_deterministic_cleanup,
+            infer_lexical_features=infer_lexical_features,
         )
 
     open_parse = build_parse_graph(open_inflect)
