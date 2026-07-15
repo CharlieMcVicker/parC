@@ -21,6 +21,7 @@ import os
 from loguru import logger
 import yaml
 from frozendict import frozendict
+import orjson
 
 from parC.yaml_utils.schema_validation import (
     validate_yaml,
@@ -95,7 +96,7 @@ def get_yaml_data_safe(kind: str, yaml_basename: str) -> dict:
 
     data = _get_yaml_data_safe_cached(kind, yaml_basename, file_hash)
     if data is not None:
-        return copy.deepcopy(data)
+        return orjson.loads(orjson.dumps(data))
     return None
 
 

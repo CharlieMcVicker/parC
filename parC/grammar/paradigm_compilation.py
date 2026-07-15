@@ -108,6 +108,21 @@ def get_roots_for_paradigm(paradigm_name: str) -> list[str]:
 """
 
 
+def binary_fold_intersect(fsts: list):
+    if len(fsts) == 1:
+        return fsts[0]
+    else:
+        pivot = len(fsts) // 2
+        return pynini.connect(
+            pynini.rmepsilon(
+                pynini.intersect(
+                    binary_fold_intersect(fsts[:pivot]),
+                    binary_fold_intersect(fsts[pivot:]),
+                )
+            )
+        )
+
+
 def _apply_feature_acceptor_constraints(
     root_fsa: pynini.Fst,
     feature_values: (
@@ -125,6 +140,7 @@ def _apply_feature_acceptor_constraints(
         return root_fsa
 
     constrained_fsa = root_fsa
+    optimized_feature_acceptors = []
     for f, v in feature_values:
         key = f"{f}={v}"
         if key in feature_acceptors:
@@ -135,9 +151,11 @@ def _apply_feature_acceptor_constraints(
             wrapped_acceptor = pynini.concat(
                 bow_fsa, pynini.concat(acceptor_fst, eow_fsa)
             ).optimize()
-            constrained_fsa = pynini.intersect(
-                constrained_fsa, wrapped_acceptor
-            ).optimize()
+            optimized_feature_acceptors.append(wrapped_acceptor)
+
+    all_acceptors = binary_fold_intersect(optimized_feature_acceptors)
+
+    constrained_fsa = pynini.intersect(constrained_fsa, all_acceptors).optimize()
     return constrained_fsa
 
 
@@ -390,6 +408,7 @@ def build_inflect_graph_for_root_regex(
 
     # Group markers by stage
     from collections import defaultdict
+
     stage_to_markers = defaultdict(list)
     for marker in marker_to_combinations.keys():
         stage = getattr(marker, "stage", None)
@@ -450,7 +469,9 @@ def build_inflect_graph_for_root_regex(
 
             if suffix_fsas:
                 marker_trigger_tags = pynini.union(*suffix_fsas).optimize()
-                marker_trigger_fsa = pynini.concat(sigma_star, marker_trigger_tags).optimize()
+                marker_trigger_fsa = pynini.concat(
+                    sigma_star, marker_trigger_tags
+                ).optimize()
             else:
                 marker_trigger_tags = pynini.accep("", token_type=syms)
                 marker_trigger_fsa = sigma_star
