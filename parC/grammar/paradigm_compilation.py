@@ -353,11 +353,19 @@ def _compile_stage_cascade(
         trigger_paths = []
         all_stage_trigger_tags = []
 
+        # Find the set of features referenced by the markers of this stage (active bundle)
+        stage_features = set()
+        for marker in markers:
+            combo_tag_lists = marker_to_combinations[marker]
+            for fs in combo_tag_lists:
+                if fs:
+                    stage_features.update(dict(fs).keys())
+
         for marker in markers:
             combo_tag_lists = marker_to_combinations[marker]
             feature_map = get_feature_map()
 
-            # Build trigger FST matching exact tags with wildcards for unconstrained features
+            # Build trigger FST matching exact tags with wildcards only for unconstrained features in active bundle
             suffix_fsas = []
             for fs in combo_tag_lists:
                 if not fs:  # global / unconstrained
@@ -368,8 +376,15 @@ def _compile_stage_cascade(
                     if fname in fs_dict:
                         val = fs_dict[fname]
                         parts.append(tag_fsas[f"[{fname}={val}]"])
+                    elif fname in stage_features:
+                        # Wildcard only for features that are active in this stage
+                        any_val_fsa = pynini.union(
+                            *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                        )
+                        parts.append(any_val_fsa)
                     else:
-                        # Wildcard: match any value for this feature
+                        # Unrelated features in this stage: match any value for this feature in the tag_domain
+                        # rather than creating a full Cartesian product wildcard tree
                         any_val_fsa = pynini.union(
                             *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
                         )
@@ -513,43 +528,81 @@ def _compile_inflect_graph_shared(
         lex_combos_set_for_active,
     )
 
+    # 1. Populate marker_to_combinations statically from precomputed markers
+    from parC.grammar.marker_resolution import get_sorted_markers_for_paradigm
+    precomputed = get_sorted_markers_for_paradigm(paradigm_name)
+    for pm, fs in precomputed["all_markers_sorted"]:
+        fs_frozen = (
+            frozenset(fs.items())
+            if isinstance(fs, dict)
+            else (frozenset(fs) if fs != "global" and fs != "unknown" else frozenset())
+        )
+        if fs_frozen not in marker_to_combinations[pm]:
+            marker_to_combinations[pm].append(fs_frozen)
+
+    # 2. Build the tag domain / sequences for inflectional features
+    inflectional_fsas = []
+    for feature_values in active_combos:
+        inflectional_fsa = get_feature_fsa(feature_values)
+        if inflectional_fsa is not None:
+            inflectional_fsas.append(inflectional_fsa)
+
+    if inflectional_fsas:
+        inflectional_union = pynini.union(*inflectional_fsas).optimize()
+    else:
+        inflectional_union = None
+
+    # 3. For each root, build its base + lexical tags
+    root_fsas = []
     for root_fsa, lexical_combo in roots_and_lexical_combos:
+        # Constrain root by its lexical combo
         constrained_root_fsa = _apply_feature_acceptor_constraints(
             root_fsa, lexical_combo
         )
         if constrained_root_fsa.num_states() == 0:
             continue
 
-        for feature_values in active_combos:
-            constrained_cell_fsa = _apply_feature_acceptor_constraints(
-                constrained_root_fsa, feature_values
-            )
-            if constrained_cell_fsa.num_states() == 0:
-                continue
+        lexical_parts = []
+        if infer_lexical_features:
+            for fname in lexical_feature_names:
+                if fname in referenced_lexical_features:
+                    val = next(v for f, v in lexical_combo if f == fname)
+                    lexical_parts.append(tag_fsas[f"[{fname}={val}]"])
+                else:
+                    lexical_parts.append(
+                        pynini.union(
+                            *[
+                                tag_fsas[f"[{fname}={v}]"]
+                                for v in feature_map[fname]
+                            ]
+                        )
+                    )
+        if lexical_parts:
+            lexical_fsa = lexical_parts[0]
+            for part in lexical_parts[1:]:
+                lexical_fsa = pynini.concat(lexical_fsa, part)
+        else:
+            lexical_fsa = None
 
-            try:
-                markers = get_markers_for_paradigm(
-                    feature_values,
-                    paradigm_name,
-                    root=None,
-                    lexical_features=lexical_combo,
-                    include_features=True,
-                    paradigm_data=paradigm_data,
-                )
-            except Exception:
-                continue
+        if lexical_fsa:
+            root_with_lex = pynini.concat(constrained_root_fsa, lexical_fsa)
+        else:
+            root_with_lex = constrained_root_fsa
 
-            for marker, fs in markers:
-                fs_frozen = (
-                    frozenset(fs.items())
-                    if isinstance(fs, dict)
-                    else (frozenset(fs) if fs != "global" else frozenset())
-                )
-                if fs_frozen not in marker_to_combinations[marker]:
-                    marker_to_combinations[marker].append(fs_frozen)
+        root_fsas.append(root_with_lex)
 
-            # Build the lexical FST preserving alphabetical order of all lexical features.
-            # Unreferenced lexical features are unioned over all their possible values in FST space.
+    if not root_fsas:
+        return pynini.Fst()
+
+    roots_union = pynini.union(*root_fsas).optimize()
+
+    # 4. Construct tag_seqs and input cascade domain
+    tag_seqs = []
+    if inflectional_union:
+        # If we have lexical features, combine them
+        # Note: for building tag domain, we union them.
+        # Construct exact tag sequences for tag_domain difference
+        for root_fsa, lexical_combo in roots_and_lexical_combos:
             lexical_parts = []
             if infer_lexical_features:
                 for fname in lexical_feature_names:
@@ -572,26 +625,48 @@ def _compile_inflect_graph_shared(
             else:
                 lexical_fsa = None
 
-            inflectional_fsa = get_feature_fsa(feature_values)
-
-            # Gather tag sequences for the tag domain to perform static difference
-            if infer_lexical_features and lexical_fsa:
-                if inflectional_fsa is not None:
-                    tag_seq = pynini.concat(lexical_fsa, inflectional_fsa)
+            for feature_values in active_combos:
+                inflectional_fsa = get_feature_fsa(feature_values)
+                if lexical_fsa:
+                    if inflectional_fsa is not None:
+                        tag_seq = pynini.concat(lexical_fsa, inflectional_fsa)
+                    else:
+                        tag_seq = lexical_fsa
                 else:
-                    tag_seq = lexical_fsa
+                    tag_seq = inflectional_fsa
+                if tag_seq:
+                    tag_seqs.append(tag_seq)
+        
+        cascade_domain = pynini.concat(roots_union, inflectional_union).optimize()
+    else:
+        # Just roots and lexical tags
+        cascade_domain = roots_union
+        for root_fsa, lexical_combo in roots_and_lexical_combos:
+            lexical_parts = []
+            if infer_lexical_features:
+                for fname in lexical_feature_names:
+                    if fname in referenced_lexical_features:
+                        val = next(v for f, v in lexical_combo if f == fname)
+                        lexical_parts.append(tag_fsas[f"[{fname}={val}]"])
+                    else:
+                        lexical_parts.append(
+                            pynini.union(
+                                *[
+                                    tag_fsas[f"[{fname}={v}]"]
+                                    for v in feature_map[fname]
+                                ]
+                            )
+                        )
+            if lexical_parts:
+                lexical_fsa = lexical_parts[0]
+                for part in lexical_parts[1:]:
+                    lexical_fsa = pynini.concat(lexical_fsa, part)
             else:
-                tag_seq = inflectional_fsa
-            if tag_seq:
-                tag_seqs.append(tag_seq)
+                lexical_fsa = None
+            if lexical_fsa:
+                tag_seqs.append(lexical_fsa)
 
-            inflect_input = constrained_cell_fsa
-            if infer_lexical_features and lexical_fsa:
-                inflect_input = pynini.concat(inflect_input, lexical_fsa)
-
-            if inflectional_fsa is not None:
-                inflect_input = pynini.concat(inflect_input, inflectional_fsa)
-            input_parts.append(inflect_input)
+    input_parts = [cascade_domain]
 
     ordered_features = []
     if infer_lexical_features:
