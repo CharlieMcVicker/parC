@@ -1068,5 +1068,156 @@ def test_optional_prefix_feature():
                     pass
 
 
+def test_optional_prefix_overlapping_parsing():
+    from parC.constants import get_yaml_dir
+    from parC.yaml_utils.yaml_server import get_yaml_kind
+    from parC.grammar.paradigm_compilation import get_open_parse_graph
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
+    import yaml
+    import pandas as pd
+    import pynini
+
+    yaml_dir = get_yaml_dir()
+    features_dir = os.path.join(yaml_dir, "Exponence", "FeatureDefinitions")
+    pos_dir = os.path.join(yaml_dir, "Lexicon", "PartOfSpeech")
+    markers_dir = os.path.join(yaml_dir, "Exponence", "FeatureMarkers")
+    paradigm_dir = os.path.join(yaml_dir, "Morphotactics", "Paradigm")
+    wordlist_dir = os.path.join(yaml_dir, "Lexicon", "Wordlists")
+    inventory_dir = os.path.join(yaml_dir, "Phonology", "Inventory")
+
+    os.makedirs(features_dir, exist_ok=True)
+    os.makedirs(pos_dir, exist_ok=True)
+    os.makedirs(markers_dir, exist_ok=True)
+    os.makedirs(paradigm_dir, exist_ok=True)
+    os.makedirs(wordlist_dir, exist_ok=True)
+    os.makedirs(inventory_dir, exist_ok=True)
+
+    feature_file = os.path.join(features_dir, "overlap_features.yaml")
+    pos_file = os.path.join(pos_dir, "overlap_pos.yaml")
+    markers_file = os.path.join(markers_dir, "overlap_markers.yaml")
+    paradigm_file = os.path.join(paradigm_dir, "overlap_paradigm.yaml")
+    csv_file = os.path.join(wordlist_dir, "overlap_pos.csv")
+    feature_file = os.path.join(features_dir, "overlap_features.yaml")
+    pos_file = os.path.join(pos_dir, "overlap_pos.yaml")
+    markers_file = os.path.join(markers_dir, "overlap_markers.yaml")
+    paradigm_file = os.path.join(paradigm_dir, "overlap_paradigm.yaml")
+    csv_file = os.path.join(wordlist_dir, "overlap_pos.csv")
+
+    feature_data = {
+        "kind": "FeatureDefinitions",
+        "features": {
+            "middle_voice": {
+                "values": ["at", "atat", "ata"],
+                "optional": True,
+            },
+        },
+    }
+
+    pos_data = {
+        "kind": "PartOfSpeech",
+        "name": "overlap_pos",
+        "features": [],
+        "lexical_features": ["middle_voice"],
+    }
+
+    markers_data = {
+        "kind": "FeatureMarkers",
+        "feature": "middle_voice",
+        "markers": {
+            "at": [{"kind": "prefix", "value": "at"}],
+            "atat": [{"kind": "prefix", "value": "atat"}],
+            "ata": [{"kind": "prefix", "value": "ata"}],
+        },
+    }
+
+    paradigm_data = {
+        "kind": "Paradigm",
+        "part_of_speech": "$overlap_pos",
+        "feature_markers": {
+            "middle_voice": "$overlap_markers",
+        },
+    }
+
+    df = pd.DataFrame([
+        {"root": "atx", "gloss": "be", "middle_voice": ""},
+        {"root": "atx", "gloss": "be", "middle_voice": "at"},
+        {"root": "tx", "gloss": "be", "middle_voice": ""},
+        {"root": "tx", "gloss": "be", "middle_voice": "ata"},
+        {"root": "x", "gloss": "be", "middle_voice": ""},
+        {"root": "x", "gloss": "be", "middle_voice": "atat"},
+    ])
+
+    with open(feature_file, "w") as f:
+        yaml.dump(feature_data, f)
+    with open(pos_file, "w") as f:
+        yaml.dump(pos_data, f)
+    with open(markers_file, "w") as f:
+        yaml.dump(markers_data, f)
+    with open(paradigm_file, "w") as f:
+        yaml.dump(paradigm_data, f)
+    df.to_csv(csv_file, index=False)
+
+    try:
+        from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
+        _get_yaml_data_safe_cached.cache_clear()
+        
+        from parC.grammar.paradigm_compilation import (
+            _get_active_combos_for_paradigm,
+            get_roots_for_paradigm
+        )
+        _get_active_combos_for_paradigm.cache_clear()
+        get_roots_for_paradigm.cache_clear()
+        
+        from parC.grammar.marker_resolution import _feature_combos_for_paradigm_cache
+        _feature_combos_for_paradigm_cache.clear()
+
+        # Clear disk cache
+        import shutil
+        from parC.yaml_utils.cache import CACHE_DIR
+        if os.path.exists(CACHE_DIR):
+            try:
+                shutil.rmtree(CACHE_DIR)
+            except Exception:
+                pass
+        os.makedirs(CACHE_DIR, exist_ok=True)
+
+        from parC.grammar.acceptor_compilation import get_pattern_fsts, get_special_fsas, get_feature_acceptor_fsts, get_symbol_table
+        get_pattern_fsts.cache_clear()
+        get_special_fsas.cache_clear()
+        get_feature_acceptor_fsts.cache_clear()
+        get_symbol_table.cache_clear()
+
+        open_parse_graph = get_open_parse_graph(
+            "overlap_paradigm", non_deterministic_cleanup=True, infer_lexical_features=True
+        )
+        assert isinstance(open_parse_graph, pynini.Fst)
+
+        # Parse atatx
+        input_fsa = word_fsa("atatx")
+        output_lattice = pynini.compose(input_fsa, open_parse_graph).optimize()
+        output_lattice = pynini.project(output_lattice, project_type="output")
+        parses = fsm_strings(output_lattice, strip_all_tags=False)
+
+        print("DEBUG parses for atatx:", parses)
+
+        expected = {
+            "[BOW]atx[EOW][middle_voice=at]",
+            "[BOW]tx[EOW][middle_voice=ata]",
+            "[BOW]x[EOW][middle_voice=atat]",
+            "[BOW]atatx[EOW]"
+        }
+        assert set(parses) == expected
+
+    finally:
+        # Clean up files
+        for p in [feature_file, pos_file, markers_file, paradigm_file, csv_file]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+
+
 
 

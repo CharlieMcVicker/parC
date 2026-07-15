@@ -648,13 +648,26 @@ def _compile_inflect_graph_shared(
                 if fname in referenced_lexical_features:
                     val_opt = next((v for f, v in lexical_combo if f == fname), None)
                     if val_opt is not None and val_opt != "":
-                        lexical_parts.append(tag_fsas[f"[{fname}={val_opt}]"])
+                        tag_fsa = tag_fsas[f"[{fname}={val_opt}]"]
+                        if fname in optional_features:
+                            tag_fsa = pynini.union(tag_fsa, pynini.accep("", token_type=get_symbol_table())).optimize()
+                        lexical_parts.append(tag_fsa)
+                    else:
+                        if fname in optional_features:
+                            lexical_parts.append(pynini.accep("", token_type=get_symbol_table()))
                 else:
                     if fname not in optional_features:
                         lexical_parts.append(
                             pynini.union(
                                 *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
                             )
+                        )
+                    else:
+                        lexical_parts.append(
+                            pynini.union(
+                                pynini.accep("", token_type=get_symbol_table()),
+                                *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                            ).optimize()
                         )
         if lexical_parts:
             lexical_fsa = lexical_parts[0]
