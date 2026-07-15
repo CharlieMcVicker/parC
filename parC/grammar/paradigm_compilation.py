@@ -348,6 +348,17 @@ def build_inflect_graph_for_root_regex(
 
             inflectional_fsa = get_feature_fsa(feature_values)
 
+            # Gather tag sequences for the tag domain to perform static difference
+            if infer_lexical_features and lexical_fsa:
+                if inflectional_fsa is not None:
+                    tag_seq = pynini.concat(lexical_fsa, inflectional_fsa)
+                else:
+                    tag_seq = lexical_fsa
+            else:
+                tag_seq = inflectional_fsa
+            if tag_seq:
+                tag_seqs.append(tag_seq)
+
             all_cell_features = list(feature_values) + list(lexical_combo)
             # TODO: see if this type error is real
             constrained_root_fsa = _apply_feature_acceptor_constraints(
@@ -449,6 +460,15 @@ def build_inflect_graph_for_root_regex(
     cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
 
     return pynini.compose(current_fst, cleanup_fst).optimize()
+
+
+def get_open_parse_graph(paradigm_name: str) -> pynini.Fst:
+    """
+    Returns an open parse graph for the given paradigm by building the inflect graph
+    with '<Phone>*' as the root regex and inverting it.
+    """
+    inflect_graph = build_inflect_graph_for_root_regex(paradigm_name, "<Phone>*")
+    return build_parse_graph(inflect_graph)
 
 
 def build_parse_graph(inflect_graph: pynini.Fst) -> pynini.Fst:
