@@ -109,7 +109,9 @@ def get_roots_for_paradigm(paradigm_name: str) -> list[str]:
 
 
 def binary_fold_intersect(fsts: list):
-    if len(fsts) == 1:
+    if len(fsts) == 0:
+        return pynini.Fst()
+    elif len(fsts) == 1:
         return fsts[0]
     else:
         pivot = len(fsts) // 2
@@ -153,9 +155,10 @@ def _apply_feature_acceptor_constraints(
             ).optimize()
             optimized_feature_acceptors.append(wrapped_acceptor)
 
-    all_acceptors = binary_fold_intersect(optimized_feature_acceptors)
+    if len(optimized_feature_acceptors):
+        all_acceptors = binary_fold_intersect(optimized_feature_acceptors)
+        constrained_fsa = pynini.intersect(constrained_fsa, all_acceptors).optimize()
 
-    constrained_fsa = pynini.intersect(constrained_fsa, all_acceptors).optimize()
     return constrained_fsa
 
 
@@ -316,6 +319,11 @@ def build_inflect_graph_for_root_regex(
         return curr
 
     for lexical_combo in lexical_combos:
+        constrained_root_fsa = _apply_feature_acceptor_constraints(
+            root_fsa, lexical_combo
+        )
+        if constrained_root_fsa.num_states() == 0:
+            continue
         for feature_values in combos:
             try:
                 markers = get_markers_for_paradigm(
@@ -378,12 +386,6 @@ def build_inflect_graph_for_root_regex(
                 tag_seqs.append(tag_seq)
 
             all_cell_features = list(feature_values) + list(lexical_combo)
-            # TODO: see if this type error is real
-            constrained_root_fsa = _apply_feature_acceptor_constraints(
-                root_fsa, all_cell_features
-            )
-            if constrained_root_fsa.num_states() == 0:
-                continue
 
             inflect_input = constrained_root_fsa
             if infer_lexical_features and lexical_fsa:
