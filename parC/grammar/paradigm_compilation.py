@@ -230,6 +230,8 @@ def _resolve_lexical_combos(
             if f in lexical_feature_names:
                 referenced_lexical_features.add(f)
 
+        from parC.yaml_utils.yaml_server import get_optional_features
+        optional_features = get_optional_features()
         lexical_value_lists = []
         for fname in list(lexical_feature_names):
             if fname not in feature_map:
@@ -241,15 +243,19 @@ def _resolve_lexical_combos(
                 lexical_feature_names.remove(fname)
                 continue
             if fname in referenced_lexical_features:
-                lexical_value_lists.append([(fname, v) for v in feature_map[fname]])
+                options = [(fname, v) for v in feature_map[fname]]
+                if fname in optional_features:
+                    options.append(None)
+                lexical_value_lists.append(options)
 
         if not lexical_value_lists:
             lexical_combos = [set()]
         else:
-            lexical_combos = [
-                set(combo_tuples)
-                for combo_tuples in itertools.product(*lexical_value_lists)
-            ]
+            lexical_combos = []
+            for combo_tuples in itertools.product(*lexical_value_lists):
+                lexical_combos.append(
+                    {t for t in combo_tuples if t is not None}
+                )
     else:
         if lexical_features:
             if isinstance(lexical_features, (dict, frozendict)):
@@ -346,11 +352,14 @@ def _compile_stage_cascade(
         feature_map = get_feature_map()
 
         # Precompile wildcards for each feature
+        from parC.yaml_utils.yaml_server import get_optional_features
+        optional_features = get_optional_features()
         any_val_fsas = {}
         for fname in ordered_features:
-            any_val_fsas[fname] = pynini.union(
-                *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
-            ).optimize()
+            val_options = [tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+            if fname in optional_features:
+                val_options.insert(0, pynini.accep("", token_type=syms))
+            any_val_fsas[fname] = pynini.union(*val_options).optimize()
 
         def get_constraint_fsa(fs) -> pynini.Fst:
             if not fs:
@@ -574,8 +583,9 @@ def _compile_inflect_graph_shared(
         if infer_lexical_features:
             for fname in lexical_feature_names:
                 if fname in referenced_lexical_features:
-                    val = next(v for f, v in lexical_combo if f == fname)
-                    lexical_parts.append(tag_fsas[f"[{fname}={val}]"])
+                    val_opt = next((v for f, v in lexical_combo if f == fname), None)
+                    if val_opt is not None:
+                        lexical_parts.append(tag_fsas[f"[{fname}={val_opt}]"])
                 else:
                     lexical_parts.append(
                         pynini.union(
@@ -617,8 +627,9 @@ def _compile_inflect_graph_shared(
         if infer_lexical_features:
             for fname in lexical_feature_names:
                 if fname in referenced_lexical_features:
-                    val = next(v for f, v in lexical_combo if f == fname)
-                    lexical_parts.append(tag_fsas[f"[{fname}={val}]"])
+                    val_opt = next((v for f, v in lexical_combo if f == fname), None)
+                    if val_opt is not None:
+                        lexical_parts.append(tag_fsas[f"[{fname}={val_opt}]"])
                 else:
                     lexical_parts.append(
                         pynini.union(
@@ -630,6 +641,8 @@ def _compile_inflect_graph_shared(
             for part in lexical_parts[1:]:
                 lexical_fsa = pynini.concat(lexical_fsa, part)
             lexical_fsas_for_domain.append(lexical_fsa)
+        else:
+            lexical_fsas_for_domain.append(pynini.accep("", token_type=get_symbol_table()))
 
     if lexical_fsas_for_domain:
         lexical_tags_union = pynini.union(*lexical_fsas_for_domain).optimize()
@@ -644,6 +657,8 @@ def _compile_inflect_graph_shared(
         tag_domain = inflectional_union
     else:
         tag_domain = pynini.accep("", token_type=get_symbol_table())
+
+
 
     cascade_domain = None
     if cache_key and is_open_root:

@@ -266,7 +266,8 @@ def get_feature_map() -> dict[str, tuple[str, ...]]:
                 )
                 continue
             names = []
-            for item in feature_data:
+            items = feature_data.get("values", []) if isinstance(feature_data, dict) else feature_data
+            for item in items:
                 if isinstance(item, str):
                     names.append(item)
                 elif isinstance(item, dict):
@@ -291,7 +292,8 @@ def get_feature_array() -> tuple[Feature]:
     for _, yaml_data in features_yaml_data:
         for feature_name, feature_data in yaml_data["features"].items():
             normalized_vals = []
-            for item in feature_data:
+            items = feature_data.get("values", []) if isinstance(feature_data, dict) else feature_data
+            for item in items:
                 if isinstance(item, str):
                     normalized_vals.append(FeatureValueDef(name=item, acceptor=None))
                 elif isinstance(item, dict):
@@ -303,6 +305,21 @@ def get_feature_array() -> tuple[Feature]:
             features.append(Feature(name=feature_name, values=tuple(normalized_vals)))
 
     return tuple(features)
+
+
+def get_optional_features() -> set[str]:
+    """
+    Fetch all optional features from the YAML files.
+    """
+    features_yaml_data = get_yaml_kind("FeatureDefinitions")["valid"]
+    optional_features = set()
+
+    for _, yaml_data in features_yaml_data:
+        for feature_name, feature_data in yaml_data["features"].items():
+            if isinstance(feature_data, dict) and feature_data.get("optional") is True:
+                optional_features.add(feature_name)
+
+    return optional_features
 
 
 def get_feature_values(feature: str) -> tuple[str]:

@@ -771,4 +771,156 @@ def test_open_parse_with_inferred_lexical_features():
     assert isinstance(open_parse_graph, pynini.Fst)
 
 
+def test_optional_feature_flags():
+    from parC.constants import get_yaml_dir
+    from parC.yaml_utils.yaml_server import get_yaml_kind
+    from parC.grammar.paradigm_compilation import get_open_parse_graph, build_inflect_graph
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
+    import yaml
+    import pandas as pd
+
+    yaml_dir = get_yaml_dir()
+    features_dir = os.path.join(yaml_dir, "Exponence", "FeatureDefinitions")
+    pos_dir = os.path.join(yaml_dir, "Lexicon", "PartOfSpeech")
+    markers_dir = os.path.join(yaml_dir, "Exponence", "FeatureMarkers")
+    contingent_dir = os.path.join(yaml_dir, "Exponence", "ContingentFeatureMarkers")
+    paradigm_dir = os.path.join(yaml_dir, "Morphotactics", "Paradigm")
+    wordlist_dir = os.path.join(yaml_dir, "Lexicon", "Wordlists")
+
+    os.makedirs(features_dir, exist_ok=True)
+    os.makedirs(pos_dir, exist_ok=True)
+    os.makedirs(markers_dir, exist_ok=True)
+    os.makedirs(contingent_dir, exist_ok=True)
+    os.makedirs(paradigm_dir, exist_ok=True)
+    os.makedirs(wordlist_dir, exist_ok=True)
+
+    feature_file = os.path.join(features_dir, "opt_test_features.yaml")
+    pos_file = os.path.join(pos_dir, "opt_test_pos.yaml")
+    markers_file = os.path.join(markers_dir, "opt_test_markers.yaml")
+    contingent_file = os.path.join(contingent_dir, "opt_test_contingent.yaml")
+    paradigm_file = os.path.join(paradigm_dir, "opt_test_paradigm.yaml")
+    csv_file = os.path.join(wordlist_dir, "opt_test_pos.csv")
+
+    feature_data = {
+        "kind": "FeatureDefinitions",
+        "features": {
+            "is_irregular": {
+                "values": ["true"],
+                "optional": True,
+            },
+        },
+    }
+
+    pos_data = {
+        "kind": "PartOfSpeech",
+        "name": "opt_test_pos",
+        "features": ["tense"],
+        "lexical_features": ["is_irregular"],
+    }
+
+    markers_data = {
+        "kind": "FeatureMarkers",
+        "feature": "tense",
+        "markers": {
+            "past": [{"kind": "suffix", "value": "-a"}],
+            "present": [{"kind": "suffix", "value": "-o"}],
+        },
+    }
+
+    contingent_data = {
+        "kind": "ContingentFeatureMarkers",
+        "features": ["is_irregular", "tense"],
+        "markers": {
+            "true": {
+                "past": [{"kind": "suffix", "value": "-e"}],
+            }
+        },
+    }
+
+    paradigm_data = {
+        "kind": "Paradigm",
+        "part_of_speech": "$opt_test_pos",
+        "feature_markers": {
+            "tense": "$opt_test_markers",
+        },
+        "contingent_markers": ["$opt_test_contingent"],
+    }
+
+    df = pd.DataFrame([
+        {"root": "cant", "gloss": "sing", "is_irregular": ""},
+        {"root": "evla", "gloss": "speak", "is_irregular": "true"},
+    ])
+
+    with open(feature_file, "w") as f:
+        yaml.dump(feature_data, f)
+    with open(pos_file, "w") as f:
+        yaml.dump(pos_data, f)
+    with open(markers_file, "w") as f:
+        yaml.dump(markers_data, f)
+    with open(contingent_file, "w") as f:
+        yaml.dump(contingent_data, f)
+    with open(paradigm_file, "w") as f:
+        yaml.dump(paradigm_data, f)
+    df.to_csv(csv_file, index=False)
+
+    try:
+        # Clear server caches so new yaml files are scanned
+        from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
+        _get_yaml_data_safe_cached.cache_clear()
+        
+        from parC.grammar.paradigm_compilation import (
+            _get_active_combos_for_paradigm,
+            get_roots_for_paradigm
+        )
+        _get_active_combos_for_paradigm.cache_clear()
+        get_roots_for_paradigm.cache_clear()
+        
+        from parC.grammar.marker_resolution import _feature_combos_for_paradigm_cache
+        _feature_combos_for_paradigm_cache.clear()
+
+        # Clear disk cache folder to force re-compilation of FSTs
+        import shutil
+        from parC.yaml_utils.cache import CACHE_DIR
+        if os.path.exists(CACHE_DIR):
+            try:
+                shutil.rmtree(CACHE_DIR)
+            except Exception:
+                pass
+        os.makedirs(CACHE_DIR, exist_ok=True)
+
+        # Build regular inflect graph (specific roots)
+        inflect_graph = build_inflect_graph("opt_test_paradigm")
+        assert isinstance(inflect_graph, pynini.Fst)
+
+        # Build open parse graph with lexical feature inference
+        open_parse_graph = get_open_parse_graph(
+            "opt_test_paradigm", non_deterministic_cleanup=True, infer_lexical_features=True
+        )
+        assert isinstance(open_parse_graph, pynini.Fst)
+
+        # 1. Parse cant-a -> should parse to cant[tense=past] (no is_irregular)
+        input_fsa_walk = word_fsa("cant-a")
+        output_lattice_walk = pynini.compose(input_fsa_walk, open_parse_graph).optimize()
+        output_lattice_walk = pynini.project(output_lattice_walk, project_type="output")
+        parses_walk = fsm_strings(output_lattice_walk, strip_all_tags=False)
+        assert "[BOW]cant[EOW][tense=past]" in parses_walk
+
+        # 2. Parse evla-e -> should parse to evla[is_irregular=true][tense=past]
+        input_fsa_go = word_fsa("evla-e")
+        output_lattice_go = pynini.compose(input_fsa_go, open_parse_graph).optimize()
+        output_lattice_go = pynini.project(output_lattice_go, project_type="output")
+        parses_go = fsm_strings(output_lattice_go, strip_all_tags=False)
+        assert "[BOW]evla[EOW][is_irregular=true][tense=past]" in parses_go
+
+    finally:
+        # Clean up files
+        for p in [feature_file, pos_file, markers_file, contingent_file, paradigm_file, csv_file]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+
+
 
