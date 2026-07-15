@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import functools
 
 import pynini
 from loguru import logger
@@ -53,6 +54,7 @@ from parC.grammar.marker_resolution import (
     get_features_for_paradigm,
     get_markers_for_paradigm,
     get_fixed_features_for_paradigm,
+    get_sorted_markers_for_paradigm,
 )
 
 
@@ -249,12 +251,17 @@ def _compile_stage_cascade(
     if not input_parts:
         return pynini.Fst()
 
+    logger.info(
+        f"[PERF][stage cascade] len marker_to_combinations, inner size: f{len(marker_to_combinations), sum(len(v) for v in marker_to_combinations.values())}"
+    )
+
     cascade_domain = pynini.union(*input_parts).optimize()
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
 
     # Group markers by stage
     from collections import defaultdict
+
     stage_to_markers = defaultdict(list)
     for marker in marker_to_combinations.keys():
         stage = getattr(marker, "stage", None)
@@ -278,6 +285,7 @@ def _compile_stage_cascade(
             ordered_stages.append(s)
 
     from parC.grammar.acceptor_compilation import get_special_fsas
+
     special_fsas = get_special_fsas()
     phone_fsa = special_fsas["phone"]
     boundary_fsa = special_fsas["boundary"]
@@ -344,6 +352,50 @@ def _compile_stage_cascade(
     return pynini.compose(current_fst, cleanup_fst).optimize()
 
 
+@functools.lru_cache(maxsize=128)
+def _get_active_combos_for_paradigm(
+    paradigm_name: str,
+    combos: frozenset[frozenset[tuple[str, str]]],
+    lexical_combos: frozenset[frozenset[tuple[str, str]]],
+) -> list[frozenset[tuple[str, str]]]:
+    """
+    Identify active inflectional feature combos that are referenced/mapped in the markers
+    by checking if they can be successfully exponed/resolved.
+    """
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    active = []
+
+    for feature_values in combos:
+        resolved = False
+        try:
+            get_markers_for_paradigm(
+                feature_values,
+                paradigm_name,
+                root=None,
+                include_features=True,
+                paradigm_data=paradigm_data,
+            )
+            resolved = True
+        except Exception:
+            for lex_combo in lexical_combos:
+                try:
+                    get_markers_for_paradigm(
+                        feature_values,
+                        paradigm_name,
+                        root=None,
+                        lexical_features=lex_combo,
+                        include_features=True,
+                        paradigm_data=paradigm_data,
+                    )
+                    resolved = True
+                    break
+                except Exception:
+                    continue
+        if resolved:
+            active.append(feature_values)
+    return active
+
+
 def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
     """root[features...] → surface form."""
     paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
@@ -386,6 +438,19 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
 
     part_of_speech = paradigm_data["part_of_speech"]
 
+    # Identify active inflectional feature combos referenced/mapped in the markers
+    lexical_combos_list = []
+    for root in roots:
+        lexical_combos_list.append(
+            frozenset(get_features_for_root(part_of_speech, root))
+        )
+
+    active_combos = _get_active_combos_for_paradigm(
+        paradigm_name,
+        frozenset(frozenset(c) for c in combos),
+        frozenset(lexical_combos_list),
+    )
+
     for root in roots:
         root_fsa = word_fsa(root)
         lexical_combo = set(get_features_for_root(part_of_speech, root))
@@ -396,7 +461,7 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
         if constrained_root_fsa.num_states() == 0:
             continue
 
-        for feature_values in combos:
+        for feature_values in active_combos:
             constrained_cell_fsa = _apply_feature_acceptor_constraints(
                 constrained_root_fsa, feature_values
             )
@@ -461,14 +526,17 @@ def build_inflect_graph_for_root_regex(
         paradigm_data=paradigm_data,
     )
 
-    lexical_combos, referenced_lexical_features, lexical_feature_names = _resolve_lexical_combos(
-        paradigm_data=paradigm_data,
-        feature_map=feature_map,
-        lexical_features=lexical_features,
-        infer_lexical_features=infer_lexical_features,
+    lexical_combos, referenced_lexical_features, lexical_feature_names = (
+        _resolve_lexical_combos(
+            paradigm_data=paradigm_data,
+            feature_map=feature_map,
+            lexical_features=lexical_features,
+            infer_lexical_features=infer_lexical_features,
+        )
     )
 
     from collections import defaultdict
+
     marker_to_combinations = defaultdict(list)
     input_parts = []
     tag_seqs = []
@@ -494,6 +562,23 @@ def build_inflect_graph_for_root_regex(
             curr = pynini.concat(curr, part)
         return curr
 
+    # Identify active inflectional feature combos referenced/mapped in the markers
+    if infer_lexical_features:
+        lex_combos_set = frozenset(frozenset(c) for c in lexical_combos)
+    else:
+        if lexical_features:
+            if isinstance(lexical_features, (dict, frozendict)):
+                lex_set = frozenset(lexical_features.items())
+            else:
+                lex_set = frozenset(lexical_features)
+            lex_combos_set = frozenset([lex_set])
+        else:
+            lex_combos_set = frozenset([frozenset()])
+
+    active_combos = _get_active_combos_for_paradigm(
+        paradigm_name, frozenset(frozenset(c) for c in combos), lex_combos_set
+    )
+
     for lexical_combo in lexical_combos:
         constrained_root_fsa = _apply_feature_acceptor_constraints(
             root_fsa, lexical_combo
@@ -501,7 +586,7 @@ def build_inflect_graph_for_root_regex(
         if constrained_root_fsa.num_states() == 0:
             continue
 
-        for feature_values in combos:
+        for feature_values in active_combos:
             constrained_cell_fsa = _apply_feature_acceptor_constraints(
                 constrained_root_fsa, feature_values
             )
