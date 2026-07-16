@@ -318,45 +318,25 @@ def _compose_stages_incrementally(
     return composed_fst
 
 
-def _get_slot_fsas(ordered_features, optional_features):
+def _get_slot_fsas(
+    ordered_features, optional_features, tag_fsas, feature_map, exponed_in_stage
+):
     # Hoist slot_fsas using native Fst mutation to avoid heavy transducer unions
     syms = get_symbol_table()
     slot_fsas = {}
 
-    # 1. Group existing symbol IDs by feature name from the table
-    from collections import defaultdict
-
-    feature_to_ids = defaultdict(list)
-    for symbol_id, label in syms:
-        if label.startswith("[") and "=" in label:
-            fname = label[1:].split("=")[0]
-            feature_to_ids[fname].append(symbol_id)
-
-    # 2. Build highly optimized single-state wildcards natively
+    # Compile stage-specific wildcards
+    slot_fsas = {}
     for fname in ordered_features:
-        ids = feature_to_ids.get(fname, [])
-        if not ids:
-            single_slot_wildcard = pynini.accep("", token_type=syms)
+        if fname in exponed_in_stage:
+            # Feature is exponed in this stage: other markers in this stage must require it to be absent
+            slot_fsas[fname] = pynini.accep("", token_type=syms)
         else:
-            # Natively mutate a single-state FST with self-loop arcs
-            f = pynini.Fst()
-            s_state = f.add_state()
-            f.set_start(s_state)
-            f.set_final(s_state)
-            for sid in ids:
-                f.add_arc(
-                    s_state, pynini.Arc(sid, sid, 0, s_state)
-                )  # Weight.one() is 0 in tropical semiring
-            single_slot_wildcard = f.optimize()
-
-        if fname in optional_features:
-            # slot_fsas[fname] = pynini.union(
-            #     pynini.accep("", token_type=syms),
-            # ).optimize()
-            slot_fsas[fname] = single_slot_wildcard
-
-        else:
-            slot_fsas[fname] = single_slot_wildcard
+            # Feature is NOT exponed in this stage: other markers can match any value (or absent if optional)
+            val_options = [tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+            if fname in optional_features:
+                val_options.insert(0, pynini.accep("", token_type=syms))
+            slot_fsas[fname] = pynini.union(*val_options).optimize()
 
     return slot_fsas
 
@@ -437,15 +417,11 @@ def _compile_stage_cascade(
 
         logger.info(f"[PERF][stage cascade] stem domain acceptor built")
 
-        feature_map = get_feature_map()
-
         # Precompile wildcards for each feature
         from parC.yaml_utils.yaml_server import get_optional_features
 
+        feature_map = get_feature_map()
         optional_features = get_optional_features()
-
-        # Hoist slot_fsas using direct SymbolTable IDs to avoid heavy transducer unions
-        slot_fsas = _get_slot_fsas(ordered_features, optional_features)
 
         # Apply sequential composition cascade by stage
         gated_fsts = []
@@ -462,28 +438,25 @@ def _compile_stage_cascade(
                     for fname in dict(fs).keys():
                         exponed_in_stage.add(fname)
 
+            slot_fsas = _get_slot_fsas(
+                ordered_features=ordered_features,
+                optional_features=optional_features,
+                feature_map=feature_map,
+                tag_fsas=tag_fsas,
+                exponed_in_stage=exponed_in_stage,
+            )
+
             def get_constraint_fsa(fs) -> pynini.Fst:
-                fs_dict = dict(fs) if fs else {}
+                if not fs:
+                    return pynini.accep("", token_type=syms)
+                fs_dict = dict(fs)
                 parts = []
                 for fname in ordered_features:
                     if fname in fs_dict:
                         val = fs_dict[fname]
                         parts.append(tag_fsas[f"[{fname}={val}]"])
-                    elif fname in exponed_in_stage:
-                        # Obligatory active slot but marker doesn't have it -> invalid derivation
-                        parts.append(pynini.accep("", token_type=syms))
-                    elif fname in optional_features:
-                        # Structurally skip the slot entirely: do not append anything to parts.
-                        # This forces the transducer to expect the next slot symbol directly,
-                        # eliminating the epsilon branch.
-                        continue
                     else:
-                        # Invariant obligatory slot: must skip exactly one valid tag
                         parts.append(slot_fsas[fname])
-
-                if not parts:
-                    return pynini.accep("", token_type=syms)
-
                 seq = parts[0]
                 for part in parts[1:]:
                     seq = pynini.concat(seq, part)
