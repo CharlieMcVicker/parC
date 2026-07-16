@@ -232,9 +232,6 @@ def _resolve_lexical_combos(
             if f in lexical_feature_names:
                 referenced_lexical_features.add(f)
 
-        from parC.yaml_utils.yaml_server import get_optional_features
-
-        optional_features = get_optional_features()
         lexical_value_lists = []
         for fname in list(lexical_feature_names):
             if fname not in feature_map:
@@ -247,8 +244,6 @@ def _resolve_lexical_combos(
                 continue
             if fname in referenced_lexical_features:
                 options = [(fname, v) for v in feature_map[fname]]
-                if fname in optional_features:
-                    options.append(None)
                 lexical_value_lists.append(options)
 
         if not lexical_value_lists:
@@ -256,7 +251,7 @@ def _resolve_lexical_combos(
         else:
             lexical_combos = []
             for combo_tuples in itertools.product(*lexical_value_lists):
-                lexical_combos.append({t for t in combo_tuples if t is not None})
+                lexical_combos.append(set(combo_tuples))
     else:
         if lexical_features:
             if isinstance(lexical_features, (dict, frozendict)):
@@ -319,7 +314,7 @@ def _compose_stages_incrementally(
 
 
 def _get_slot_fsas(
-    ordered_features, optional_features, tag_fsas, feature_map, exponed_in_stage
+    ordered_features, tag_fsas, feature_map, exponed_in_stage
 ):
     # Hoist slot_fsas using native Fst mutation to avoid heavy transducer unions
     syms = get_symbol_table()
@@ -332,10 +327,8 @@ def _get_slot_fsas(
             # Feature is exponed in this stage: other markers in this stage must require it to be absent
             slot_fsas[fname] = pynini.accep("", token_type=syms)
         else:
-            # Feature is NOT exponed in this stage: other markers can match any value (or absent if optional)
+            # Feature is NOT exponed in this stage: other markers can match any value
             val_options = [tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
-            if fname in optional_features:
-                val_options.insert(0, pynini.accep("", token_type=syms))
             slot_fsas[fname] = pynini.union(*val_options).optimize()
 
     return slot_fsas
@@ -417,11 +410,7 @@ def _compile_stage_cascade(
 
         logger.info(f"[PERF][stage cascade] stem domain acceptor built")
 
-        # Precompile wildcards for each feature
-        from parC.yaml_utils.yaml_server import get_optional_features
-
         feature_map = get_feature_map()
-        optional_features = get_optional_features()
 
         # Apply sequential composition cascade by stage
         gated_fsts = []
@@ -440,7 +429,6 @@ def _compile_stage_cascade(
 
             slot_fsas = _get_slot_fsas(
                 ordered_features=ordered_features,
-                optional_features=optional_features,
                 feature_map=feature_map,
                 tag_fsas=tag_fsas,
                 exponed_in_stage=exponed_in_stage,
@@ -684,24 +672,20 @@ def _compile_inflect_graph_shared(
 
         lexical_parts = []
         if infer_lexical_features:
-            from parC.yaml_utils.yaml_server import get_optional_features
-
-            optional_features = get_optional_features()
             for fname in lexical_feature_names:
                 if fname in referenced_lexical_features:
                     val_opt = next((v for f, v in lexical_combo if f == fname), None)
                     if val_opt is not None and val_opt != "":
                         lexical_parts.append(tag_fsas[f"[{fname}={val_opt}]"])
                 else:
-                    if fname not in optional_features:
-                        lexical_parts.append(
-                            pynini.union(
-                                *[
-                                    tag_fsas[f"[{fname}={v}]"]
-                                    for v in feature_map[fname]
-                                ]
-                            )
+                    lexical_parts.append(
+                        pynini.union(
+                            *[
+                                tag_fsas[f"[{fname}={v}]"]
+                                for v in feature_map[fname]
+                            ]
                         )
+                    )
         if lexical_parts:
             lexical_fsa = lexical_parts[0]
             for part in lexical_parts[1:]:
@@ -735,44 +719,21 @@ def _compile_inflect_graph_shared(
     for lexical_combo in unique_lexical_combos:
         lexical_parts = []
         if infer_lexical_features:
-            from parC.yaml_utils.yaml_server import get_optional_features
-
-            optional_features = get_optional_features()
             for fname in lexical_feature_names:
                 if fname in referenced_lexical_features:
                     val_opt = next((v for f, v in lexical_combo if f == fname), None)
                     if val_opt is not None and val_opt != "":
                         tag_fsa = tag_fsas[f"[{fname}={val_opt}]"]
-                        if fname in optional_features:
-                            tag_fsa = pynini.union(
-                                tag_fsa, pynini.accep("", token_type=get_symbol_table())
-                            ).optimize()
                         lexical_parts.append(tag_fsa)
-                    else:
-                        if fname in optional_features:
-                            lexical_parts.append(
-                                pynini.accep("", token_type=get_symbol_table())
-                            )
                 else:
-                    if fname not in optional_features:
-                        lexical_parts.append(
-                            pynini.union(
-                                *[
-                                    tag_fsas[f"[{fname}={v}]"]
-                                    for v in feature_map[fname]
-                                ]
-                            )
+                    lexical_parts.append(
+                        pynini.union(
+                            *[
+                                tag_fsas[f"[{fname}={v}]"]
+                                for v in feature_map[fname]
+                            ]
                         )
-                    else:
-                        lexical_parts.append(
-                            pynini.union(
-                                pynini.accep("", token_type=get_symbol_table()),
-                                *[
-                                    tag_fsas[f"[{fname}={v}]"]
-                                    for v in feature_map[fname]
-                                ],
-                            ).optimize()
-                        )
+                    )
         if lexical_parts:
             lexical_fsa = lexical_parts[0]
             for part in lexical_parts[1:]:

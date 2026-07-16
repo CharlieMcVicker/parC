@@ -307,21 +307,6 @@ def get_feature_array() -> tuple[Feature]:
     return tuple(features)
 
 
-def get_optional_features() -> set[str]:
-    """
-    Fetch all optional features from the YAML files.
-    """
-    features_yaml_data = get_yaml_kind("FeatureDefinitions")["valid"]
-    optional_features = set()
-
-    for _, yaml_data in features_yaml_data:
-        for feature_name, feature_data in yaml_data["features"].items():
-            if isinstance(feature_data, dict) and feature_data.get("optional") is True:
-                optional_features.add(feature_name)
-
-    return optional_features
-
-
 def get_feature_values(feature: str) -> tuple[str]:
     """
     Fetch all values for a given feature.
