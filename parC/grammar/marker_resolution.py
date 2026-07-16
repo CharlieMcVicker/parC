@@ -47,9 +47,11 @@ def _get_paradigm_references(
     paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
     if paradigm_data is None:
         return ((), ())
-    _, marker_files, contingent_files = get_feature_combos_for_paradigm(
-        name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
-    )
+    marker_files = []
+    for ref in paradigm_data.get("feature_markers", {}).values():
+        if isinstance(ref, str) and ref.startswith("$"):
+            marker_files.append(ref)
+    contingent_files = list(paradigm_data.get("contingent_markers", []))
     return tuple(sorted(marker_files)), tuple(sorted(contingent_files))
 
 
@@ -141,9 +143,11 @@ def get_sorted_markers_for_paradigm(paradigm_name: str) -> dict:
     if paradigm_data is None:
         raise ValueError(f"Paradigm {paradigm_name} not found")
 
-    _, marker_files, contingent_files = get_feature_combos_for_paradigm(
-        name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
-    )
+    marker_files = []
+    for ref in paradigm_data.get("feature_markers", {}).values():
+        if isinstance(ref, str) and ref.startswith("$"):
+            marker_files.append(ref)
+    contingent_files = list(paradigm_data.get("contingent_markers", []))
 
     part_of_speech = paradigm_data["part_of_speech"]
     part_of_speech_data = get_yaml_data_safe(
@@ -305,15 +309,17 @@ def get_markers_for_paradigm(
     )
     feature_values -= fixed_features
 
-    combos, _, _ = get_feature_combos_for_paradigm(
-        name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
-    )
-    combos = [combo - fixed_features for combo in combos]
-
-    if not any([feature_values == combo for combo in combos]):
-        raise ValueError(
-            f"Feature values {feature_values} not valid for paradigm {paradigm_name}"
-        )
+    # validate feature values are valid for this paradigm (each feature name is defined and its value exists in the feature map)
+    feature_map = get_feature_map()
+    for feat_name, feat_val in feature_values:
+        if feat_name not in feature_map:
+            raise ValueError(
+                f"Feature '{feat_name}' in requested values is not defined in the feature definitions."
+            )
+        if feat_val not in feature_map[feat_name]:
+            raise ValueError(
+                f"Feature value '{feat_val}' for feature '{feat_name}' is not defined in the feature definitions."
+            )
 
     part_of_speech = paradigm_data["part_of_speech"]
     if root:
@@ -416,97 +422,6 @@ def get_free_features_for_paradigm(name: str, kind: str = "Paradigm") -> list[st
 def get_contingent_markers_for_paradigm(paradigm_name):
     paradigm_data = get_yaml_data_safe(kind="Paradigm", yaml_basename=paradigm_name)
     return list(paradigm_data.get("contingent_markers", []))
-
-
-_feature_combos_for_paradigm_cache = {}
-
-
-def get_feature_combos_for_paradigm(
-    name: str,
-    feature_map: dict | None = None,
-    kind: str = "Paradigm",
-    paradigm_data=None,
-) -> tuple[list[FeatureComboType], list[str], list[str]]:
-    """
-    Return valid feature combos for a paradigm.
-    Each combo is a set of (feature, value) pairs covering all free features
-    plus any fixed feature values.
-    """
-    yaml_file_path = get_yaml_path(kind, name)
-    yaml_hash = get_file_sha256(yaml_file_path)
-
-    feat_def_dir = os.path.dirname(get_yaml_path("FeatureDefinitions", "dummy"))
-    from parC.yaml_utils.cache import max_directory_mtime
-
-    feat_mtime = (
-        max_directory_mtime(feat_def_dir) if os.path.exists(feat_def_dir) else 0.0
-    )
-
-    cache_key = (name, kind, yaml_hash, feat_mtime)
-    if cache_key in _feature_combos_for_paradigm_cache:
-        cached_combos, marker_files, contingent_files = (
-            _feature_combos_for_paradigm_cache[cache_key]
-        )
-        return (
-            [set(c) for c in cached_combos],
-            list(marker_files),
-            list(contingent_files),
-        )
-
-    if feature_map is None:
-        feature_map = get_feature_map()
-
-    if paradigm_data is None:
-        paradigm_data = get_yaml_data_safe(kind=kind, yaml_basename=name)
-
-    part_of_speech = paradigm_data["part_of_speech"]
-    part_of_speech_data = get_yaml_data_safe(
-        yaml_basename=part_of_speech, kind="PartOfSpeech"
-    )
-
-    fixed: dict[str, str] = {}
-    marker_files: list[str] = []
-    # assume all inflectional features are free unless explicitly fixed in the paradigm
-    free_feature_names: list[str] = part_of_speech_data.get("features", [])
-
-    for feature_name, ref in paradigm_data.get("feature_markers", {}).items():
-        if ref is None:
-            # feature is only exponed via contingent markers
-            # or is unexponed
-            continue
-        if isinstance(ref, str) and ref.startswith("$"):
-            marker_files.append(ref)
-        else:
-            fixed[feature_name] = ref
-            if feature_name in free_feature_names:
-                free_feature_names.remove(feature_name)
-
-    contingent_files = get_contingent_markers_for_paradigm(name)
-
-    free_value_lists = []
-    for fname in free_feature_names:
-        if fname not in feature_map:
-            logger.warning(f"Feature '{fname}' not in feature map — skipping.")
-            continue
-        free_value_lists.append([(fname, v) for v in feature_map[fname]])
-
-    if not free_value_lists:
-        combos = [set(fixed.items())]
-    else:
-        combos = [
-            set(fixed.items()) | set(combo_tuples)
-            for combo_tuples in itertools.product(*free_value_lists)
-        ]
-
-    # Store frozen versions in cache
-    frozen_combos = [frozenset(c) for c in combos]
-    _feature_combos_for_paradigm_cache[cache_key] = (
-        frozen_combos,
-        tuple(marker_files),
-        tuple(contingent_files),
-    )
-
-    return combos, marker_files, contingent_files
 
 
 def get_features_for_paradigm(name: str) -> set[str]:

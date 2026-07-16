@@ -52,7 +52,6 @@ from parC.grammar.acceptor_compilation import (
     filter_strings_by_pattern,
 )
 from parC.grammar.marker_resolution import (
-    get_feature_combos_for_paradigm,
     get_features_for_paradigm,
     get_markers_for_paradigm,
     get_fixed_features_for_paradigm,
@@ -519,12 +518,12 @@ def _compile_stage_cascade(
 @functools.lru_cache(maxsize=128)
 def _get_active_combos_for_paradigm(
     paradigm_name: str,
-    combos: frozenset[frozenset[tuple[str, str]]],
     lexical_combos: frozenset[frozenset[tuple[str, str]]],
 ) -> list[frozenset[tuple[str, str]]]:
     """
     Identify active inflectional feature combos that are referenced/mapped in the markers
-    by checking if they can be successfully exponed/resolved.
+    by checking if they can be successfully exponed/resolved, computed directly from
+    marker definitions.
     """
     paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
     precomputed = get_sorted_markers_for_paradigm(paradigm_name)
@@ -550,22 +549,86 @@ def _get_active_combos_for_paradigm(
         if reqs_list:
             contingent_specs.append((reqs_list, contingent_features[cf]))
 
-    active = []
-    lex_list = list(lexical_combos) if lexical_combos else [frozenset()]
+    # Identify all inflectional features (excluding lexical ones) that can have active markers.
+    part_of_speech = paradigm_data["part_of_speech"]
+    part_of_speech_data = get_yaml_data_safe(
+        yaml_basename=part_of_speech, kind="PartOfSpeech"
+    )
+    free_features = list(part_of_speech_data.get("features", []))
+    for feat_name, ref in paradigm_data.get("feature_markers", {}).items():
+        if ref is not None and not (isinstance(ref, str) and ref.startswith("$")):
+            if feat_name in free_features:
+                free_features.remove(feat_name)
 
-    for combo in combos:
-        inflect_combo = combo - fixed_features
-        target_features = {f for f, _ in inflect_combo}
+    # Build potential combinations from active regular features and contingent spec paths
+    feature_map = get_feature_map()
+    import itertools
+    
+    # Each regular feature with markers defines its possible values.
+    # If a feature has regular markers, we only use values that are actually supported.
+    # If a feature has no regular markers, it might only be exponed contingently.
+    # For contingent-only features, we can restrict their values to those actually defined
+    # in the contingent specs to avoid multiplying by values that have no rules.
+    contingent_active_values = {}
+    for reqs_list, cf_features in contingent_specs:
+        for reqs in reqs_list:
+            for feat, val in reqs:
+                if feat not in contingent_active_values:
+                    contingent_active_values[feat] = set()
+                contingent_active_values[feat].add(val)
+
+    feature_branches = {}
+    for feat in free_features:
+        if feat in regular_features_supported:
+            feature_branches[feat] = list(regular_features_supported[feat])
+        elif feat in contingent_active_values:
+            feature_branches[feat] = list(contingent_active_values[feat])
+        else:
+            # Unexponed feature. We can draw values from the feature map.
+            feature_branches[feat] = list(feature_map.get(feat, []))
+
+    # Compute cartesian product over only these active subsets of feature values (much smaller than full space)
+    keys = list(feature_branches.keys())
+    value_tuples = list(itertools.product(*(feature_branches[k] for k in keys)))
+    
+    raw_combos = []
+    for vt in value_tuples:
+        raw_combos.append(frozenset(zip(keys, vt)))
+
+    logger.debug(
+        f"[_get_active_combos_for_paradigm] Paradigm '{paradigm_name}': "
+        f"Materialized active-branches subset of size {len(raw_combos)} "
+        f"(features: { {k: len(v) for k, v in feature_branches.items()} })"
+    )
+
+    active = []
+    lex_list = [dict(lc) for lc in lexical_combos] if lexical_combos else [{}]
+
+    # Convert contingent reqs lists to dicts for O(1) checks
+    contingent_specs_dicts = []
+    for reqs_list, cf_features in contingent_specs:
+        reqs_dicts = [dict(r) for r in reqs_list]
+        contingent_specs_dicts.append((reqs_dicts, cf_features))
+
+    for combo in raw_combos:
+        # Re-attach fixed features
+        full_combo = combo | fixed_features
+        inflect_combo = full_combo - fixed_features
+        inflect_dict = dict(inflect_combo)
+        target_features = set(inflect_dict.keys())
 
         resolved = False
-        for lex_combo in lex_list:
-            feat_vals = inflect_combo | lex_combo
+        for lex_dict in lex_list:
+            # Union of two dicts is extremely fast
+            feat_vals = {**inflect_dict, **lex_dict}
 
-            unexponed = set(target_features)
-            for reqs_list, cf_features in contingent_specs:
+            unexponed = target_features.copy()
+            for reqs_dicts, cf_features in contingent_specs_dicts:
                 matched = False
-                for reqs in reqs_list:
-                    if reqs.issubset(feat_vals):
+                for reqs in reqs_dicts:
+                    # check if reqs is subset of feat_vals
+                    # O(1) membership check for each element instead of set intersection/subset
+                    if all(feat_vals.get(k) == v for k, v in reqs.items()):
                         matched = True
                         break
                 if matched:
@@ -573,7 +636,7 @@ def _get_active_combos_for_paradigm(
 
             still_unexponed = False
             for f in unexponed:
-                v = next((val for feat, val in inflect_combo if feat == f), None)
+                v = inflect_dict.get(f)
                 if v is None or v not in regular_features_supported.get(f, set()):
                     still_unexponed = True
                     break
@@ -583,7 +646,12 @@ def _get_active_combos_for_paradigm(
                 break
 
         if resolved:
-            active.append(combo)
+            active.append(full_combo)
+
+    logger.debug(
+        f"[_get_active_combos_for_paradigm] Paradigm '{paradigm_name}': "
+        f"Filtered down to {len(active)} active combos"
+    )
 
     return active
 
@@ -592,7 +660,6 @@ def _compile_inflect_graph_shared(
     paradigm_name: str,
     paradigm_data: dict,
     feature_map: dict,
-    combos: list,
     roots_and_lexical_combos: list[tuple[pynini.Fst, FeatureComboType]],
     infer_lexical_features: bool,
     lexical_feature_names: list[str],
@@ -632,7 +699,6 @@ def _compile_inflect_graph_shared(
 
     active_combos = _get_active_combos_for_paradigm(
         paradigm_name,
-        frozenset(frozenset(c) for c in combos),
         lex_combos_set_for_active,
     )
 
@@ -776,7 +842,7 @@ def _compile_inflect_graph_shared(
     if infer_lexical_features:
         ordered_features.extend(lexical_feature_names)
     ordered_features.extend(
-        sorted(list(set().union(*[set(dict(c).keys()) for c in combos])))
+        sorted(list(set().union(*[set(dict(c).keys()) for c in active_combos])))
     )
 
     res = _compile_stage_cascade(
@@ -823,10 +889,6 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
 
     feature_map = get_feature_map()
     roots = get_roots_for_paradigm(paradigm_name=paradigm_name)
-    combos, _, _ = get_feature_combos_for_paradigm(
-        name=paradigm_name, feature_map=feature_map, kind="Paradigm"
-    )
-
     from parC.lexicon import get_features_for_root
 
     part_of_speech = paradigm_data["part_of_speech"]
@@ -844,7 +906,6 @@ def build_inflect_graph(paradigm_name: str) -> pynini.Fst:
         paradigm_name=paradigm_name,
         paradigm_data=paradigm_data,
         feature_map=feature_map,
-        combos=combos,
         roots_and_lexical_combos=roots_and_lexical_combos,
         infer_lexical_features=False,
         lexical_feature_names=[],
@@ -906,13 +967,6 @@ def build_inflect_graph_for_root_regex(
         raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
 
     feature_map = get_feature_map()
-    combos, _, _ = get_feature_combos_for_paradigm(
-        name=paradigm_name,
-        feature_map=feature_map,
-        kind="Paradigm",
-        paradigm_data=paradigm_data,
-    )
-
     lexical_combos, referenced_lexical_features, lexical_feature_names = (
         _resolve_lexical_combos(
             paradigm_data=paradigm_data,
@@ -940,7 +994,6 @@ def build_inflect_graph_for_root_regex(
         paradigm_name=paradigm_name,
         paradigm_data=paradigm_data,
         feature_map=feature_map,
-        combos=combos,
         roots_and_lexical_combos=roots_and_lexical_combos,
         infer_lexical_features=infer_lexical_features,
         lexical_feature_names=lexical_feature_names,
