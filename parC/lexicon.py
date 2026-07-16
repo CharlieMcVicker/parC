@@ -25,6 +25,19 @@ def load_lexicon_df(lexicon_basename: str) -> pd.DataFrame:
         else:
             init_lexicon(lexicon_basename, csv_path)
             df = pd.read_csv(csv_path, keep_default_na=False)
+
+        part_of_speech = get_yaml_data_safe(
+            yaml_basename=lexicon_basename, kind="PartOfSpeech"
+        )
+        if part_of_speech:
+            expected_cols = (
+                part_of_speech.get("lexical_features", [])
+                + part_of_speech.get("principal_parts", [])
+            )
+            for col in expected_cols:
+                if col not in df.columns:
+                    df[col] = ""
+
         _lexicon_df_cache[lexicon_basename] = df
     return _lexicon_df_cache[lexicon_basename].copy()
 
