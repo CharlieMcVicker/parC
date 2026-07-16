@@ -274,6 +274,93 @@ def _resolve_lexical_combos(
     return lexical_combos, referenced_lexical_features, lexical_feature_names
 
 
+def _compose_stages_incrementally(
+    cascade_domain: pynini.Fst,
+    gated_fsts: list[pynini.Fst],
+) -> pynini.Fst:
+    import hashlib
+
+    composed_fst = cascade_domain
+    current_key = hashlib.sha256(cascade_domain.write_to_string()).hexdigest()
+
+    for idx, stage_fst in enumerate(gated_fsts):
+        stage_hash = hashlib.sha256(stage_fst.write_to_string()).hexdigest()
+        next_key = hashlib.sha256(
+            f"{current_key}_{stage_hash}".encode("utf-8")
+        ).hexdigest()
+
+        cached_composed = get_cached_fst(f"composition_{next_key}")
+        if cached_composed is not None:
+            composed_fst = cached_composed
+            logger.debug(
+                f"Incremental composition cache HIT for stage {idx} ({next_key})"
+            )
+        else:
+            pre_states = composed_fst.num_states()
+            pre_arcs = sum(
+                composed_fst.num_arcs(state) for state in composed_fst.states()
+            )
+            composed_fst = pynini.compose(composed_fst, stage_fst).optimize()
+            post_states = composed_fst.num_states()
+            post_arcs = sum(
+                composed_fst.num_arcs(state) for state in composed_fst.states()
+            )
+            logger.info(
+                f"[PERF][COMPOSE STAGES][{idx+1}/{len(gated_fsts)}] states/arcs {pre_states}=>{post_states} - {pre_arcs}=>{post_arcs}"
+            )
+            save_cached_fst(f"composition_{next_key}", composed_fst)
+            logger.debug(
+                f"Incremental composition cache MISS for stage {idx}, composed and cached ({next_key})"
+            )
+
+        current_key = next_key
+
+    return composed_fst
+
+
+def _get_slot_fsas(ordered_features, optional_features):
+    # Hoist slot_fsas using native Fst mutation to avoid heavy transducer unions
+    syms = get_symbol_table()
+    slot_fsas = {}
+
+    # 1. Group existing symbol IDs by feature name from the table
+    from collections import defaultdict
+
+    feature_to_ids = defaultdict(list)
+    for symbol_id, label in syms:
+        if label.startswith("[") and "=" in label:
+            fname = label[1:].split("=")[0]
+            feature_to_ids[fname].append(symbol_id)
+
+    # 2. Build highly optimized single-state wildcards natively
+    for fname in ordered_features:
+        ids = feature_to_ids.get(fname, [])
+        if not ids:
+            single_slot_wildcard = pynini.accep("", token_type=syms)
+        else:
+            # Natively mutate a single-state FST with self-loop arcs
+            f = pynini.Fst()
+            s_state = f.add_state()
+            f.set_start(s_state)
+            f.set_final(s_state)
+            for sid in ids:
+                f.add_arc(
+                    s_state, pynini.Arc(sid, sid, 0, s_state)
+                )  # Weight.one() is 0 in tropical semiring
+            single_slot_wildcard = f.optimize()
+
+        if fname in optional_features:
+            # slot_fsas[fname] = pynini.union(
+            #     pynini.accep("", token_type=syms),
+            # ).optimize()
+            slot_fsas[fname] = single_slot_wildcard
+
+        else:
+            slot_fsas[fname] = single_slot_wildcard
+
+    return slot_fsas
+
+
 def _compile_stage_cascade(
     paradigm_name: str,
     paradigm_data: dict,
@@ -294,12 +381,12 @@ def _compile_stage_cascade(
     syms = get_symbol_table()
     sigma_star = get_sigma_star()
 
-    stage_cascade = None
+    gated_fsts = None
     if cache_key:
-        stage_cascade = get_cached_fst(f"{cache_key}_stage_cascade")
+        gated_fsts = get_cached_fst(f"{cache_key}_stages")
 
-    if stage_cascade is not None:
-        logger.debug(f"Loaded cached stage cascade for key {cache_key}")
+    if gated_fsts is not None:
+        logger.debug(f"Loaded cached stages for key {cache_key}")
     else:
         logger.info(
             f"[PERF][stage cascade] len marker_to_combinations, inner size: f{len(marker_to_combinations), sum(len(v) for v in marker_to_combinations.values())}"
@@ -357,6 +444,9 @@ def _compile_stage_cascade(
 
         optional_features = get_optional_features()
 
+        # Hoist slot_fsas using direct SymbolTable IDs to avoid heavy transducer unions
+        slot_fsas = _get_slot_fsas(ordered_features, optional_features)
+
         # Apply sequential composition cascade by stage
         gated_fsts = []
         for stage_no, stage in enumerate(ordered_stages):
@@ -371,32 +461,29 @@ def _compile_stage_cascade(
                 for fs in marker_to_combinations[marker]:
                     for fname in dict(fs).keys():
                         exponed_in_stage.add(fname)
-            # Compile stage-specific wildcards
-            any_val_fsas = {}
-            for fname in ordered_features:
-                if fname in exponed_in_stage:
-                    # Feature is exponed in this stage: other markers in this stage must require it to be absent
-                    any_val_fsas[fname] = pynini.accep("", token_type=syms)
-                else:
-                    # Feature is NOT exponed in this stage: other markers can match any value (or absent if optional)
-                    val_options = [
-                        tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]
-                    ]
-                    if fname in optional_features:
-                        val_options.insert(0, pynini.accep("", token_type=syms))
-                    any_val_fsas[fname] = pynini.union(*val_options).optimize()
 
             def get_constraint_fsa(fs) -> pynini.Fst:
-                if not fs:
-                    return pynini.accep("", token_type=syms)
-                fs_dict = dict(fs)
+                fs_dict = dict(fs) if fs else {}
                 parts = []
                 for fname in ordered_features:
                     if fname in fs_dict:
                         val = fs_dict[fname]
                         parts.append(tag_fsas[f"[{fname}={val}]"])
+                    elif fname in exponed_in_stage:
+                        # Obligatory active slot but marker doesn't have it -> invalid derivation
+                        parts.append(pynini.accep("", token_type=syms))
+                    elif fname in optional_features:
+                        # Structurally skip the slot entirely: do not append anything to parts.
+                        # This forces the transducer to expect the next slot symbol directly,
+                        # eliminating the epsilon branch.
+                        continue
                     else:
-                        parts.append(any_val_fsas[fname])
+                        # Invariant obligatory slot: must skip exactly one valid tag
+                        parts.append(slot_fsas[fname])
+
+                if not parts:
+                    return pynini.accep("", token_type=syms)
+
                 seq = parts[0]
                 for part in parts[1:]:
                     seq = pynini.concat(seq, part)
@@ -458,14 +545,12 @@ def _compile_stage_cascade(
             gated_fsts.append(gated_fst)
         logger.info(f"[PERF][stage cascade] stages built")
 
-        stage_cascade = binary_fold_compose(gated_fsts)
         if cache_key:
-            save_cached_fst(f"{cache_key}_stage_cascade", stage_cascade)
             save_cached_fst(f"{cache_key}_stages", gated_fsts)
 
-    composed_fst = pynini.compose(cascade_domain, stage_cascade).optimize()
+    composed_fst = _compose_stages_incrementally(cascade_domain, gated_fsts)
 
-    logger.info(f"[PERF][stage cascade] stages composed")
+    logger.info(f"[PERF][stage cascade] stages composed left-to-right")
 
     return composed_fst
 
@@ -784,9 +869,7 @@ def _compile_inflect_graph_shared(
     else:
         delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) for t in tag_fsas])
 
-    cleanup_fst = pynini.cdrewrite(
-        delete_tags.optimize(), "", "", sigma_star
-    ).optimize()
+    cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
 
     res = pynini.compose(res, cleanup_fst).optimize()
 

@@ -83,7 +83,7 @@ def test_open_parse_graph_and_subcomponent_caching():
     cache_key = get_paradigm_cache_key(paradigm_name)
     
     # Clean up any existing cached files for this key to ensure we test building and caching
-    suffixes = ["_open_parse", "_open_inflect", "_open_input_acceptor", "_stage_cascade", "_stages"]
+    suffixes = ["_open_parse", "_open_inflect", "_open_input_acceptor", "_stages"]
     for suff in suffixes:
         for p in [os.path.join(CACHE_DIR, f"{cache_key}{suff}.fst"),
                   os.path.join(CACHE_DIR, f"{cache_key}{suff}.meta")]:
@@ -102,7 +102,6 @@ def test_open_parse_graph_and_subcomponent_caching():
     assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_open_parse.fst"))
     assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_open_inflect.fst"))
     assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_open_input_acceptor.fst"))
-    assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_stage_cascade.fst"))
     assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_stages.meta"))
     assert os.path.exists(os.path.join(CACHE_DIR, f"{cache_key}_stages_seq_0.fst"))
     
@@ -130,3 +129,30 @@ def test_open_parse_graph_and_subcomponent_caching():
     # Second call hits cache
     g5 = build_inflect_graph_for_root_regex(paradigm_name, "<Phone>*", infer_lexical_features=True)
     assert isinstance(g5, pynini.Fst)
+
+
+def test_incremental_composition_caching():
+    from parC.grammar.paradigm_compilation import get_open_parse_graph, get_paradigm_cache_key
+    import glob
+    
+    paradigm_name = "verb_a_stem"
+    cache_key = get_paradigm_cache_key(paradigm_name)
+    
+    # Clean up top-level caches to force compilation
+    suffixes = ["_open_parse", "_open_inflect", "_open_input_acceptor", "_stages"]
+    for suff in suffixes:
+        for p in [os.path.join(CACHE_DIR, f"{cache_key}{suff}.fst"),
+                  os.path.join(CACHE_DIR, f"{cache_key}{suff}.meta")]:
+            if os.path.exists(p):
+                os.remove(p)
+    
+    # Clear any composition cache files first
+    for p in glob.glob(os.path.join(CACHE_DIR, "composition_*")):
+        os.remove(p)
+        
+    # This compiles the stages and compositions
+    get_open_parse_graph(paradigm_name)
+    
+    # Check that composition cache files were created
+    comp_files = glob.glob(os.path.join(CACHE_DIR, "composition_*.fst"))
+    assert len(comp_files) > 0
