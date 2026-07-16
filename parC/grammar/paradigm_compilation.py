@@ -481,36 +481,64 @@ def _get_active_combos_for_paradigm(
     by checking if they can be successfully exponed/resolved.
     """
     paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-    active = []
+    precomputed = get_sorted_markers_for_paradigm(paradigm_name)
 
-    for feature_values in combos:
+    fixed_features = frozenset(
+        get_fixed_features_for_paradigm(
+            name=paradigm_name, kind="Paradigm", paradigm_data=paradigm_data
+        )
+    )
+
+    regular_by_feature = precomputed["regular_by_feature"]
+    regular_features_supported = {
+        feat: {val for val, markers in val_dict.items() if markers}
+        for feat, val_dict in regular_by_feature.items()
+    }
+
+    contingent_by_file = precomputed["contingent_by_file"]
+    contingent_features = precomputed["contingent_features"]
+
+    contingent_specs = []
+    for cf, leaves in contingent_by_file.items():
+        reqs_list = [reqs for reqs, markers in leaves if markers]
+        if reqs_list:
+            contingent_specs.append((reqs_list, contingent_features[cf]))
+
+    active = []
+    lex_list = list(lexical_combos) if lexical_combos else [frozenset()]
+
+    for combo in combos:
+        inflect_combo = combo - fixed_features
+        target_features = {f for f, _ in inflect_combo}
+
         resolved = False
-        try:
-            get_markers_for_paradigm(
-                feature_values,
-                paradigm_name,
-                root=None,
-                include_features=True,
-                paradigm_data=paradigm_data,
-            )
-            resolved = True
-        except Exception:
-            for lex_combo in lexical_combos:
-                try:
-                    get_markers_for_paradigm(
-                        feature_values,
-                        paradigm_name,
-                        root=None,
-                        lexical_features=lex_combo,
-                        include_features=True,
-                        paradigm_data=paradigm_data,
-                    )
-                    resolved = True
+        for lex_combo in lex_list:
+            feat_vals = inflect_combo | lex_combo
+
+            unexponed = set(target_features)
+            for reqs_list, cf_features in contingent_specs:
+                matched = False
+                for reqs in reqs_list:
+                    if reqs.issubset(feat_vals):
+                        matched = True
+                        break
+                if matched:
+                    unexponed -= cf_features
+
+            still_unexponed = False
+            for f in unexponed:
+                v = next((val for feat, val in inflect_combo if feat == f), None)
+                if v is None or v not in regular_features_supported.get(f, set()):
+                    still_unexponed = True
                     break
-                except Exception:
-                    continue
+
+            if not still_unexponed:
+                resolved = True
+                break
+
         if resolved:
-            active.append(feature_values)
+            active.append(combo)
+
     return active
 
 
@@ -755,11 +783,14 @@ def _compile_inflect_graph_shared(
         )
     else:
         delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) for t in tag_fsas])
-    cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
+
+    cleanup_fst = pynini.cdrewrite(
+        delete_tags.optimize(), "", "", sigma_star
+    ).optimize()
 
     res = pynini.compose(res, cleanup_fst).optimize()
 
-    logger.info(f"[PERF][stage cascade] cleanup filters applied")
+    logger.info(f"[PERF][cleanup] cleanup filters applied")
 
     if cache_key and is_open_root:
         save_cached_fst(f"{cache_key}_open_inflect", res)
