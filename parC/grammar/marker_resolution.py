@@ -454,18 +454,24 @@ def get_feature_combos_for_paradigm(
 
     contingent_files = get_contingent_markers_for_paradigm(name)
 
+    from parC.yaml_utils.yaml_server import get_optional_features
+    optional_features = get_optional_features()
+
     free_value_lists = []
     for fname in free_feature_names:
         if fname not in feature_map:
             logger.warning(f"Feature '{fname}' not in feature map — skipping.")
             continue
-        free_value_lists.append([(fname, v) for v in feature_map[fname]])
+        choices = [(fname, v) for v in feature_map[fname]]
+        if fname in optional_features:
+            choices.append(None)
+        free_value_lists.append(choices)
 
     if not free_value_lists:
         combos = [set(fixed.items())]
     else:
         combos = [
-            set(fixed.items()) | set(combo_tuples)
+            set(fixed.items()) | {item for item in combo_tuples if item is not None}
             for combo_tuples in itertools.product(*free_value_lists)
         ]
 

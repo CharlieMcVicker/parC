@@ -544,12 +544,12 @@ def _compile_inflect_graph_shared(
 
     def get_feature_fsa(
         feat_vals: FeatureComboType | dict[str, str],
-    ) -> pynini.Fst | None:
+    ) -> pynini.Fst:
         if isinstance(feat_vals, (dict, frozendict)):
             feat_vals = list(feat_vals.items())
         sorted_feats = sorted(feat_vals)
         if not sorted_feats:
-            return None
+            return pynini.accep("", token_type=get_symbol_table())
         parts = [tag_fsas[f"[{f}={v}]"] for f, v in sorted_feats]
         curr = parts[0]
         for part in parts[1:]:
@@ -579,8 +579,7 @@ def _compile_inflect_graph_shared(
     inflectional_fsas = []
     for feature_values in active_combos:
         inflectional_fsa = get_feature_fsa(feature_values)
-        if inflectional_fsa is not None:
-            inflectional_fsas.append(inflectional_fsa)
+        inflectional_fsas.append(inflectional_fsa)
 
     if inflectional_fsas:
         inflectional_union = pynini.union(*inflectional_fsas).optimize()
