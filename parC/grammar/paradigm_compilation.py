@@ -213,7 +213,9 @@ def _resolve_lexical_combos(
         part_of_speech_data = get_yaml_data_safe(
             yaml_basename=part_of_speech, kind="PartOfSpeech"
         )
-        lexical_feature_names = list(part_of_speech_data.get("lexical_features", []))
+        lexical_feature_names = sorted(
+            list(part_of_speech_data.get("lexical_features", []))
+        )
 
         # Prune lexical features to only those referenced in this paradigm's rules/markers
         referenced_lexical_features = set()
@@ -231,6 +233,7 @@ def _resolve_lexical_combos(
                 referenced_lexical_features.add(f)
 
         from parC.yaml_utils.yaml_server import get_optional_features
+
         optional_features = get_optional_features()
         lexical_value_lists = []
         for fname in list(lexical_feature_names):
@@ -253,9 +256,7 @@ def _resolve_lexical_combos(
         else:
             lexical_combos = []
             for combo_tuples in itertools.product(*lexical_value_lists):
-                lexical_combos.append(
-                    {t for t in combo_tuples if t is not None}
-                )
+                lexical_combos.append({t for t in combo_tuples if t is not None})
     else:
         if lexical_features:
             if isinstance(lexical_features, (dict, frozendict)):
@@ -353,6 +354,7 @@ def _compile_stage_cascade(
 
         # Precompile wildcards for each feature
         from parC.yaml_utils.yaml_server import get_optional_features
+
         optional_features = get_optional_features()
 
         # Apply sequential composition cascade by stage
@@ -362,7 +364,7 @@ def _compile_stage_cascade(
                 f"[PERF][stage cascade] building stage '{stage}' {(stage_no+1)/len(ordered_stages)}"
             )
             markers = stage_to_markers[stage]
-            
+
             # Identify features exponed in this stage
             exponed_in_stage = set()
             for marker in markers:
@@ -377,7 +379,9 @@ def _compile_stage_cascade(
                     any_val_fsas[fname] = pynini.accep("", token_type=syms)
                 else:
                     # Feature is NOT exponed in this stage: other markers can match any value (or absent if optional)
-                    val_options = [tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                    val_options = [
+                        tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]
+                    ]
                     if fname in optional_features:
                         val_options.insert(0, pynini.accep("", token_type=syms))
                     any_val_fsas[fname] = pynini.union(*val_options).optimize()
@@ -596,6 +600,7 @@ def _compile_inflect_graph_shared(
         lexical_parts = []
         if infer_lexical_features:
             from parC.yaml_utils.yaml_server import get_optional_features
+
             optional_features = get_optional_features()
             for fname in lexical_feature_names:
                 if fname in referenced_lexical_features:
@@ -606,7 +611,10 @@ def _compile_inflect_graph_shared(
                     if fname not in optional_features:
                         lexical_parts.append(
                             pynini.union(
-                                *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                                *[
+                                    tag_fsas[f"[{fname}={v}]"]
+                                    for v in feature_map[fname]
+                                ]
                             )
                         )
         if lexical_parts:
@@ -643,6 +651,7 @@ def _compile_inflect_graph_shared(
         lexical_parts = []
         if infer_lexical_features:
             from parC.yaml_utils.yaml_server import get_optional_features
+
             optional_features = get_optional_features()
             for fname in lexical_feature_names:
                 if fname in referenced_lexical_features:
@@ -650,23 +659,33 @@ def _compile_inflect_graph_shared(
                     if val_opt is not None and val_opt != "":
                         tag_fsa = tag_fsas[f"[{fname}={val_opt}]"]
                         if fname in optional_features:
-                            tag_fsa = pynini.union(tag_fsa, pynini.accep("", token_type=get_symbol_table())).optimize()
+                            tag_fsa = pynini.union(
+                                tag_fsa, pynini.accep("", token_type=get_symbol_table())
+                            ).optimize()
                         lexical_parts.append(tag_fsa)
                     else:
                         if fname in optional_features:
-                            lexical_parts.append(pynini.accep("", token_type=get_symbol_table()))
+                            lexical_parts.append(
+                                pynini.accep("", token_type=get_symbol_table())
+                            )
                 else:
                     if fname not in optional_features:
                         lexical_parts.append(
                             pynini.union(
-                                *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                                *[
+                                    tag_fsas[f"[{fname}={v}]"]
+                                    for v in feature_map[fname]
+                                ]
                             )
                         )
                     else:
                         lexical_parts.append(
                             pynini.union(
                                 pynini.accep("", token_type=get_symbol_table()),
-                                *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
+                                *[
+                                    tag_fsas[f"[{fname}={v}]"]
+                                    for v in feature_map[fname]
+                                ],
                             ).optimize()
                         )
         if lexical_parts:
@@ -675,7 +694,9 @@ def _compile_inflect_graph_shared(
                 lexical_fsa = pynini.concat(lexical_fsa, part)
             lexical_fsas_for_domain.append(lexical_fsa)
         else:
-            lexical_fsas_for_domain.append(pynini.accep("", token_type=get_symbol_table()))
+            lexical_fsas_for_domain.append(
+                pynini.accep("", token_type=get_symbol_table())
+            )
 
     if lexical_fsas_for_domain:
         lexical_tags_union = pynini.union(*lexical_fsas_for_domain).optimize()
@@ -690,8 +711,6 @@ def _compile_inflect_graph_shared(
         tag_domain = inflectional_union
     else:
         tag_domain = pynini.accep("", token_type=get_symbol_table())
-
-
 
     cascade_domain = None
     if cache_key and is_open_root:
@@ -722,13 +741,19 @@ def _compile_inflect_graph_shared(
         marker_to_combinations=marker_to_combinations,
         tag_fsas=tag_fsas,
         ordered_features=ordered_features,
-        cache_key=(f"{base_cache_key}_infer" if infer_lexical_features else base_cache_key) if base_cache_key else cache_key,
+        cache_key=(
+            (f"{base_cache_key}_infer" if infer_lexical_features else base_cache_key)
+            if base_cache_key
+            else cache_key
+        ),
     )
 
     # Cleanup Tags
     sigma_star = get_sigma_star()
     if non_deterministic_cleanup:
-        delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) | tag_fsas[t] for t in tag_fsas])
+        delete_tags = pynini.union(
+            *[pynutil.delete(tag_fsas[t]) | tag_fsas[t] for t in tag_fsas]
+        )
     else:
         delete_tags = pynini.union(*[pynutil.delete(tag_fsas[t]) for t in tag_fsas])
     cleanup_fst = pynini.cdrewrite(delete_tags, "", "", sigma_star).optimize()
@@ -881,6 +906,37 @@ def build_inflect_graph_for_root_regex(
     )
 
 
+def get_open_inflect_graph(
+    paradigm_name: str,
+    non_deterministic_cleanup: bool = False,
+    infer_lexical_features: bool = False,
+    cache_key: str = None,
+):
+    if not cache_key:
+        cache_key = get_paradigm_cache_key(paradigm_name)
+    suffix_parts = []
+    if infer_lexical_features:
+        suffix_parts.append("infer")
+    if non_deterministic_cleanup:
+        suffix_parts.append("nd_cleanup")
+    suffix = f"_{'_'.join(suffix_parts)}" if suffix_parts else ""
+    open_inflect_key = f"{cache_key}_open_inflect{suffix}"
+
+    open_inflect = get_cached_fst(open_inflect_key)
+    if open_inflect is None:
+        open_inflect = build_inflect_graph_for_root_regex(
+            paradigm_name,
+            "<Phone>*",
+            cache_key=cache_key,
+            non_deterministic_cleanup=non_deterministic_cleanup,
+            infer_lexical_features=infer_lexical_features,
+        )
+
+    save_cached_fst(open_inflect_key, open_inflect)
+
+    return open_inflect
+
+
 def get_open_parse_graph(
     paradigm_name: str,
     non_deterministic_cleanup: bool = False,
@@ -906,16 +962,13 @@ def get_open_parse_graph(
         return open_parse
 
     logger.debug(f"Open parse graph cache MISS for paradigm {paradigm_name}")
-    open_inflect_key = f"{cache_key}_open_inflect{suffix}"
-    open_inflect = get_cached_fst(open_inflect_key)
-    if open_inflect is None:
-        open_inflect = build_inflect_graph_for_root_regex(
-            paradigm_name,
-            "<Phone>*",
-            cache_key=cache_key,
-            non_deterministic_cleanup=non_deterministic_cleanup,
-            infer_lexical_features=infer_lexical_features,
-        )
+
+    open_inflect = get_open_inflect_graph(
+        paradigm_name,
+        non_deterministic_cleanup,
+        infer_lexical_features,
+        cache_key=cache_key,
+    )
 
     open_parse = build_parse_graph(open_inflect)
     save_cached_fst(open_parse_key, open_parse)
