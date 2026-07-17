@@ -505,12 +505,19 @@ def test_parse_with_inverted_open_root_graph():
     # Invert the graph to get the parse graph
     parse_graph = pynini.invert(inflect_graph).optimize()
 
+    import re
+    def clean_root(s):
+        match = re.search(r"\[BOW\](.*?)\[EOW\]", s)
+        if match:
+            return re.sub(r"\[[^\]]+\]", "", match.group(1))
+        return ""
+
     # Verify that "habl-as" parses back to "habl" with features [person_number=2sg][tense=present][mood=indicative]
     form_fsa_habl = word_fsa("habl-as")
     parse_lattice_habl = pynini.compose(form_fsa_habl, parse_graph).optimize()
     parse_strs_habl = fsm_strings(parse_lattice_habl)
     assert any(
-        "habl" in s
+        clean_root(s) == "habl"
         and "[person_number=2sg]" in s
         and "[tense=present]" in s
         and "[mood=indicative]" in s
@@ -522,12 +529,21 @@ def test_parse_with_inverted_open_root_graph():
     parse_lattice_cant = pynini.compose(form_fsa_cant, parse_graph).optimize()
     parse_strs_cant = fsm_strings(parse_lattice_cant)
     assert any(
-        "cant" in s
+        clean_root(s) == "cant"
         and "[person_number=2sg]" in s
         and "[tense=present]" in s
         and "[mood=indicative]" in s
         for s in parse_strs_cant
     )
+
+    # Verify that no unexpected tags exist inside the root part (before [EOW]) besides [BOW]
+    assert all(
+        "[" not in s.split("[EOW]")[0].replace("[BOW]", "")
+        for s in parse_strs_habl
+    )
+
+
+
 
 
 def test_feature_value_acceptors():

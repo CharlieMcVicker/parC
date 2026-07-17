@@ -113,7 +113,14 @@ def _build_special_fsas(
         *[pynini.accep(p, token_type=syms) for p in phones]
     ).optimize()
 
-    all_tags = list(dict.fromkeys(inventory.tags))
+    user_tags = [t for t in dict.fromkeys(inventory.tags) if t not in (R.bow, R.eow)]
+    user_tag_fsa = (
+        pynini.union(*[pynini.accep(t, token_type=syms) for t in user_tags]).optimize()
+        if user_tags
+        else pynini.accep("", token_type=syms)
+    )
+
+    all_tags = list(user_tags)
     for feat in features:
         for val in feat.values:
             all_tags.append(f"[{feat.name}={val.name}]")
@@ -138,6 +145,7 @@ def _build_special_fsas(
     return {
         "phone": phone_fsa,
         "flag": flag_fsa,
+        "user_tag": user_tag_fsa,
         "sigma": sigma,
         "sigma_star": sigma_star,
         "bow": bow_fsa,
