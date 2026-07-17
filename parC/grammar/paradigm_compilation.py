@@ -959,23 +959,31 @@ def build_inflect_graph_for_root_regex(
         if open_inflect is not None:
             return open_inflect
 
+    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+    if paradigm_data is None:
+        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
+
     if is_open_root:
+        open_root_template = paradigm_data.get("open_root_template")
+        if open_root_template:
+            # Compile the custom template pattern
+            open_root_fsa = fsa(open_root_template)
+        else:
+            from parC.grammar.acceptor_compilation import get_special_fsas
+            special_fsas = get_special_fsas()
+            phone_fsa = special_fsas["phone"]
+            user_tag_fsa = special_fsas["user_tag"]
+            open_root_fsa = pynini.union(phone_fsa, user_tag_fsa).star.optimize()
+        
         from parC.grammar.acceptor_compilation import get_special_fsas
         special_fsas = get_special_fsas()
-        phone_fsa = special_fsas["phone"]
-        user_tag_fsa = special_fsas["user_tag"]
         bow_fsa = special_fsas["bow"]
         eow_fsa = special_fsas["eow"]
-        open_root_fsa = pynini.union(phone_fsa, user_tag_fsa).star.optimize()
         root_fsa = pynini.concat(bow_fsa, pynini.concat(open_root_fsa, eow_fsa)).optimize()
     elif isinstance(root_regex, str):
         root_fsa = fsa(R.bow + root_regex + R.eow)
     else:
         root_fsa = root_regex
-
-    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-    if paradigm_data is None:
-        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
 
     feature_map = get_feature_map()
     lexical_combos, referenced_lexical_features, lexical_feature_names = (

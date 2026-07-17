@@ -787,6 +787,43 @@ def test_open_parse_with_inferred_lexical_features():
     assert isinstance(open_parse_graph, pynini.Fst)
 
 
+def test_paradigm_specific_open_root_template():
+    from parC.grammar.paradigm_compilation import build_inflect_graph_for_root_regex
+    from parC.grammar.acceptor_compilation import word_fsa, fsm_strings
+    from parC.yaml_utils.yaml_server import get_yaml_data_safe
+    import pynini
+
+    # Mock the return value of get_yaml_data_safe for a test paradigm
+    paradigm_data = get_yaml_data_safe("Paradigm", "verb_a_stem").copy()
+    
+    # Let's override open_root_template in paradigm_data to only match stems ending in 't'
+    # E.g. restricting stems to only characters, but ending with 't'
+    # The default for "verb_a_stem" allows "habl" which ends in 'l'.
+    # If we set open_root_template to "<Phone>*t", then "habl-as" should fail to parse, but "cant-as" (stem "cant" ends in 't') should succeed.
+    paradigm_data["open_root_template"] = "<Phone>*t"
+
+    # We patch get_yaml_data_safe temporarily
+    import parC.grammar.paradigm_compilation
+    original_get_yaml = parC.grammar.paradigm_compilation.get_yaml_data_safe
+    try:
+        parC.grammar.paradigm_compilation.get_yaml_data_safe = lambda kind, name: paradigm_data if name == "verb_a_stem" else original_get_yaml(kind, name)
+        
+        # Build inflect graph with custom template
+        inflect_graph = build_inflect_graph_for_root_regex("verb_a_stem", "<Phone>*", cache_key="test_custom_template")
+        parse_graph = pynini.invert(inflect_graph).optimize()
+
+        # "cant-as" (stem "cant" ends in 't') should be parsed successfully
+        cant_lattice = pynini.compose(word_fsa("cant-as"), parse_graph).optimize()
+        assert len(fsm_strings(cant_lattice)) > 0
+
+        # "habl-as" (stem "habl" ends in 'l') should fail to parse
+        habl_lattice = pynini.compose(word_fsa("habl-as"), parse_graph).optimize()
+        assert len(fsm_strings(habl_lattice)) == 0
+    finally:
+        parC.grammar.paradigm_compilation.get_yaml_data_safe = original_get_yaml
+
+
+
 
 
 

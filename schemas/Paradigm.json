@@ -39,6 +39,10 @@
         }
       }
     },
+    "open_root_template": {
+      "type": "string",
+      "description": "A paradigm-specific open root template pattern to override the default templates."
+    },
     "additionalProperties": false
   },
   "stage_order": {
