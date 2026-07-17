@@ -312,9 +312,7 @@ def _compose_stages_incrementally(
     return composed_fst
 
 
-def _get_slot_fsas(
-    ordered_features, tag_fsas, feature_map, exponed_in_stage
-):
+def _get_slot_fsas(ordered_features, tag_fsas, feature_map, exponed_in_stage):
     # Hoist slot_fsas using native Fst mutation to avoid heavy transducer unions
     syms = get_symbol_table()
     slot_fsas = {}
@@ -402,9 +400,19 @@ def _compile_stage_cascade(
         phone_fsa = special_fsas["phone"]
         boundary_fsa = special_fsas["boundary"]
         word_edge_fsa = special_fsas["word_edge"]
-        sigma_phones_and_boundaries = pynini.union(
-            phone_fsa, boundary_fsa, word_edge_fsa
-        ).optimize()
+        flag_fsa = special_fsas.get("flag")
+        # Include flag symbols (temp tags like [DIST], [WI], [NI]) in the
+        # stems domain so that the trigger_fsa in later stages can still match
+        # intermediate forms that already have dummy tokens inserted by
+        # earlier stages (e.g. add_dist inserts [DIST] before insert_dist fires).
+        if flag_fsa is not None:
+            sigma_phones_and_boundaries = pynini.union(
+                phone_fsa, boundary_fsa, word_edge_fsa, flag_fsa
+            ).optimize()
+        else:
+            sigma_phones_and_boundaries = pynini.union(
+                phone_fsa, boundary_fsa, word_edge_fsa
+            ).optimize()
         stems_domain_acceptor = sigma_phones_and_boundaries.star.optimize()
 
         logger.info(f"[PERF][stage cascade] stem domain acceptor built")
@@ -563,7 +571,7 @@ def _get_active_combos_for_paradigm(
     # Build potential combinations from active regular features and contingent spec paths
     feature_map = get_feature_map()
     import itertools
-    
+
     # Each regular feature with markers defines its possible values.
     # If a feature has regular markers, we only use values that are actually supported.
     # If a feature has no regular markers, it might only be exponed contingently.
@@ -590,7 +598,7 @@ def _get_active_combos_for_paradigm(
     # Compute cartesian product over only these active subsets of feature values (much smaller than full space)
     keys = list(feature_branches.keys())
     value_tuples = list(itertools.product(*(feature_branches[k] for k in keys)))
-    
+
     raw_combos = []
     for vt in value_tuples:
         raw_combos.append(frozenset(zip(keys, vt)))
@@ -746,10 +754,7 @@ def _compile_inflect_graph_shared(
                 else:
                     lexical_parts.append(
                         pynini.union(
-                            *[
-                                tag_fsas[f"[{fname}={v}]"]
-                                for v in feature_map[fname]
-                            ]
+                            *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
                         )
                     )
         if lexical_parts:
@@ -794,10 +799,7 @@ def _compile_inflect_graph_shared(
                 else:
                     lexical_parts.append(
                         pynini.union(
-                            *[
-                                tag_fsas[f"[{fname}={v}]"]
-                                for v in feature_map[fname]
-                            ]
+                            *[tag_fsas[f"[{fname}={v}]"] for v in feature_map[fname]]
                         )
                     )
         if lexical_parts:
