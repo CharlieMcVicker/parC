@@ -1,91 +1,12 @@
-# This is a Rules config file
-# Define context-sensitive phonological rules.
 kind: Rules
 rules:
+- description: 'e > ie, o > ue in stressed syllables
 
-# type rule-simple, rule-map or rule-seq to add more rules
-# note left and right contexts are optional
-- name: diphthongization
-  description: >
-    e > ie, o > ue in stressed syllables
-  string_map:
-    - [e, ie]
-    - [o, ue]
+    '
+  name: diphthongization
   right_context: <C>+#
-
-### HELP FOR RULES ###
-# Here we define context-sensitive phonological rules
-# that may be appled in morphological processes.
-# For example, suppose we want to define a rule for intervocalic
-# flapping of t,d.
-# - name: intervocalic_flapping
-#   description: Flapping of t,d between vowels
-#   input_pattern: t|d
-#   output_pattern: ɾ
-#   left_context: "<V>"
-#   right_context: "<V>"
-
-# This is a simple rule (hence the rule-simple shortcut),
-# meaning that the input and output patterns are each a single
-# regex pattern.
-# The left and right contexts control where the rule can be applied.
-# They are also writen as regex patterns.
-# The rule must contain at least a name, input pattern, and output pattern.
-
-# Suppose instead we want to voice all stops between vowels.
-# - name: intervocalic_voicing
-#   description: Voicing of voiceless stops between vowels
-#   string_map:
-#     - [p, b]
-#     - [t, d]
-#     - [k ,g]
-#   left_context: "<V>"
-#   right_context: "<V>"
-
-# This is a string map rule (rule-map shortcut), where we define
-# a list of input-output pairs for the transformation rather than
-# a single pair.
-# Be careful not to make the mistake of thinking a simple rule
-# could work for this case, e.g.
-
-# - name: intervocalic_voicing_wrong
-#   description: Voicing of voiceless stops between vowels
-#   input_pattern: p|t|k
-#   output_pattern: b|d|g
-#   left_context: "<V>"
-#   right_context: "<V>"
-
-# This will not work as intended because the it says
-# "t" can become "d" OR "b" OR "g" and likewise for the other inputs.
-# To make sure "t" only becomes "d", "p" only becomes "b", and "k"
-# only becomes "g", we should use a string map rule.
-
-# The last rule type is a rule sequence (rule-seq shortcut),
-# which allows you to combine multiple rules into a single rule.
-# For example, suppose we have a pattern of vowel hiatus reduction
-# where the first vowel generally deletes, but the sequence [a+i]
-# instead coalesces to [e].
-# We can write this as a chain of rules.
-
-# - name: Coalesce ai
-#   description: Coalesce [a+i] to [e].
-#   input_pattern: "ai"
-#   output_pattern: "e"
-#   left_context: ""
-#   right_context: ""
-
-# - name: Elide first vowel
-#   description: Elide the first vowel in a vowel hiatus.
-#   input_pattern: "<V>"
-#   output_pattern: ""
-#   left_context: ""
-#   right_context: "<V>"
-
-# - name: Resolve hiatus
-#   description: Resolve vowel hiatus.
-#   rule_sequence:
-#     - name: $Coalesce ai
-#     - name: $Elide first vowel
-
-# Note the style for referencing other rules in a rule sequence:
-# Simply prefix the rule reference with a $.
+  string_map:
+  - - e
+    - ie
+  - - o
+    - ue

@@ -1,107 +1,86 @@
-# This is an Inventory config file
-# This is where you specify phonemes as well as special tags
-# for your language
-kind: Inventory
 data:
-  # type inv-phones, inv-tags or inv-nested to add more nodes!
-  - name: Consonants
-    ref: <C>
-    children:
-      - name: stops
-        ref: <Stop>
-        children:
-          - name: voiced stops
-            ref: <VoicedStop>
-            children:
-              - name: Voiced stops
-                ref: <VoicedStop>
-                phones: [b, d, ɟ, g]
-          - name: voiceless stops
-            ref: <VoicelessStop>
-            phones: [p, t, c, k]
-      - name: fricatives
-        ref: <Frc>
-        children:
-          - name: voiced fricatives
-            ref: <VoicedFrc>
-            phones: [v, ð]
-          - name: voiceless fricative
-            ref: <VoicelessFrc>
-            phones: [s]
-      - name: sonorants
-        ref: <Son>
-        children:
-          - name: nasals
-            ref: <N>
-            phones: [m, n, ɲ, ŋ]
-          - name: liquids
-            ref: <Liq>
-            phones: [r, ɾ, ɽ, l]
-          - name: glides
-            ref: <Glide>
-            phones: [j, w]
-  - name: vowels
-    ref: <V>
-    children:
-      - name: high vowels
-        ref: <Vhi>
-        phones: [i, u]
-      - name: mid vowels
-        ref: <Vmid>
-        phones: [e, o, ɛ, ɜ, ɔ]
-      - name: low vowels
-        ref: <Vlo>
-        phones: [a]
-      - name: tone
-        ref: <T>
-        # \u0301: combining acute (high tone)
-        # \u0300: combining acute (high tone)
-        # \u0302: combining grave (falling tone)
-        # \u030C: combining caron (rising tone)
-        phones: ["\u0301", "\u0300", "\u0302", "\u030C"]
-
-## HELP FOR INVENTORY ##
-# The inventory is built as a nested tree
-# Each node of the tree contains either phones, tags, or other nodes
-# that themeselves may contain phones, tags, or other nodes, etc.
-# Each node must have three attributes:
-#   name: A natural description of the node
-#   ref: A shorthand to refer to the node in parC
-#     must be wrapped in <angle_brackets> and contain no spaces
-#   children OR phones OR tags
-#     children: nested nodes
-#     phones: list of phones, each phone may be a single letter or multiple,
-#       separated by commas e.g. [p, t, tʃ, k]
-#       optionally wrapped in quotes e.g. ["p", "t", "tʃ", "k"]
-#     tags: list of tags, each tag must be wrapped in both quotes and "[square_brackets]"
-#       and not contain any spaces, e.g. [ "[TBU]", "[MORA]", "[SYLLABLE]"]
-#       keep in mind the outermost square brackets indicate a list
-
-# Below `consonants` and `vowels` are nested nodes,
-# whereas `stops`, `nasals`, `high vowels` etc. are phone nodes
-# and `tone tags` is a tag node
-
-# - name: consonants
-#   ref: <C>
-#   children:
-#   - name: Stops
-#     ref: <Stp>
-#     phones: [p, t, k, b, d, g]
-#   - name: Nasals
-#     ref: <N>
-#     phones: [m, n, ŋ]
-# - name: vowels
-#   ref: <V>
-#   children:
-#   - name: high vowels
-#     ref: <V_High>
-#     phones: [i, u]
-#   - name: mid vowels
-#     ref: <V_Mid>
-#     phones: [e, o]
-#   - name: low_vowels
-#     ref: <V_Low>
-#     phones: [a, æ]
-# - name: tone slots
-#   ref: <ToneSlot>
-#   tags: ["[TBU]", "[FLOAT]"]
+- children:
+  - children:
+    - children:
+      - name: Voiced stops
+        phones:
+        - b
+        - d
+        - "\u025F"
+        - g
+        ref: <VoicedStop>
+      name: voiced stops
+      ref: <VoicedStop>
+    - name: voiceless stops
+      phones:
+      - p
+      - t
+      - c
+      - k
+      ref: <VoicelessStop>
+    name: stops
+    ref: <Stop>
+  - children:
+    - name: voiced fricatives
+      phones:
+      - v
+      - "\xF0"
+      ref: <VoicedFrc>
+    - name: voiceless fricative
+      phones:
+      - s
+      ref: <VoicelessFrc>
+    name: fricatives
+    ref: <Frc>
+  - children:
+    - name: nasals
+      phones:
+      - m
+      - n
+      - "\u0272"
+      - "\u014B"
+      ref: <N>
+    - name: liquids
+      phones:
+      - r
+      - "\u027E"
+      - "\u027D"
+      - l
+      ref: <Liq>
+    - name: glides
+      phones:
+      - j
+      - w
+      ref: <Glide>
+    name: sonorants
+    ref: <Son>
+  name: Consonants
+  ref: <C>
+- children:
+  - name: high vowels
+    phones:
+    - i
+    - u
+    ref: <Vhi>
+  - name: mid vowels
+    phones:
+    - e
+    - o
+    - "\u025B"
+    - "\u025C"
+    - "\u0254"
+    ref: <Vmid>
+  - name: low vowels
+    phones:
+    - a
+    ref: <Vlo>
+  - name: tone
+    phones:
+    - "\u0301"
+    - "\u0300"
+    - "\u0302"
+    - "\u030C"
+    ref: <T>
+  name: vowels
+  ref: <V>
+kind: Inventory

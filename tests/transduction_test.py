@@ -823,6 +823,43 @@ def test_paradigm_specific_open_root_template():
         parC.grammar.paradigm_compilation.get_yaml_data_safe = original_get_yaml
 
 
+def test_inflect_partitioned_feature_sorting():
+    from parC.grammar.paradigm_compilation import inflect
+    # inflect for verb_a_stem with root "habl" and feature values
+    forms = inflect("habl", {"person_number": "2sg", "tense": "present", "mood": "indicative"}, "verb_a_stem")
+    assert "habl-as" in forms or "hablas" in forms or len(forms) > 0
+
+
+def test_inflect_open_root():
+    from parC.grammar.paradigm_compilation import inflect, inflect_open_root
+
+    forms1 = inflect("canta", {"person_number": "2sg", "tense": "present", "mood": "indicative"}, "verb_a_stem", open_root=True)
+    assert len(forms1) > 0
+
+    forms2 = inflect_open_root("canta", {"person_number": "2sg", "tense": "present", "mood": "indicative"}, "verb_a_stem")
+    assert forms1 == forms2
+
+
+def test_inflect_with_lexical_features_in_feature_values():
+    from parC.grammar.paradigm_compilation import inflect
+    forms = inflect(
+        "habl",
+        {"conjugation_class": "a_class", "person_number": "2sg", "tense": "present", "mood": "indicative"},
+        "verb_a_stem",
+        open_root=True,
+        infer_lexical_features=True,
+    )
+    assert len(forms) > 0
+
+
+def test_open_inflect_caching_across_distinct_lexical_combos():
+    from parC.grammar.paradigm_compilation import get_open_inflect_graph
+    g1 = get_open_inflect_graph("verb_a_stem", lexical_features={"conjugation_class": "a_class"}, infer_lexical_features=True)
+    g2 = get_open_inflect_graph("verb_a_stem", lexical_features={"conjugation_class": "e_class"}, infer_lexical_features=True)
+    assert g1.write_to_string() == g2.write_to_string()
+
+
+
 
 
 

@@ -1,89 +1,65 @@
-# This is an Inventory config file
-# This is where you specify phonemes as well as special tags
-# for your language
-kind: Inventory
 data:
-  # type inv-phones, inv-tags or inv-nested to add your first node!
-  - name: Consonants
-    ref: <C>
-    children:
-    - name: Stops
-      ref: <Stp>
-      children:
-      - name: Voiced stops
-        ref: <B>
-        phones: [b, d, g]
-      - name: Voiceless stops
-        ref: <P>
-        phones: [p, t, c, q]
-    - name: Fricatives
-      ref: <Frc>
-      phones: [f, v, s, z, x, h, j]
-    - name: Sonorants
-      ref: <Son>
-      phones: [r, l, y, ü]
-    - name: Nasals
-      ref: <N>
-      phones: [m, n, ñ]
-  - name: Vowels
-    ref: <V>
-    children:
-    - name: High vowels
-      ref: <V_High>
-      phones: [i, u]
-    - name: Mid vowels
-      ref: <V_Mid>
-      phones: [e, o]
-    - name: Low vowels
-      ref: <V_Low>
-      phones: [a]
-  - name: Stress marker
-    ref: <Stress>
-    phones: ["́"]
-  
-
-## HELP FOR INVENTORY ##
-# The inventory is built as a nested tree
-# Each node of the tree contains either phones, tags, or other nodes
-# that themeselves may contain phones, tags, or other nodes, etc.
-# Each node must have three attributes:
-#   name: A natural description of the node
-#   ref: A shorthand to refer to the node in parC
-#     must be wrapped in <angle_brackets> and contain no spaces
-#   children OR phones OR tags
-#     children: nested nodes
-#     phones: list of phones, each phone may be a single letter or multiple,
-#       separated by commas e.g. [p, t, tʃ, k]
-#       optionally wrapped in quotes e.g. ["p", "t", "tʃ", "k"]
-#     tags: list of tags, each tag must be wrapped in both quotes and "[square_brackets]"
-#       and not contain any spaces, e.g. [ "[TBU]", "[MORA]", "[SYLLABLE]"]
-#       keep in mind the outermost square brackets indicate a list
-
-# Below `consonants` and `vowels` are nested nodes,
-# whereas `stops`, `nasals`, `high vowels` etc. are phone nodes
-# and `tone tags` is a tag node
-
-# - name: consonants
-#   ref: <C>
-#   children:
-#   - name: Stops
-#     ref: <Stp>
-#     phones: [p, t, k, b, d, g]
-#   - name: Nasals
-#     ref: <N>
-#     phones: [m, n, ŋ]
-# - name: vowels
-#   ref: <V>
-#   children:
-#   - name: high vowels
-#     ref: <V_High>
-#     phones: [i, u]
-#   - name: mid vowels
-#     ref: <V_Mid>
-#     phones: [e, o]
-#   - name: low_vowels
-#     ref: <V_Low>
-#     phones: [a, æ]
-# - name: tone slots
-#   ref: <ToneSlot>
-#   tags: ["[TBU]", "[FLOAT]"]
+- children:
+  - children:
+    - name: Voiced stops
+      phones:
+      - b
+      - d
+      - g
+      ref: <B>
+    - name: Voiceless stops
+      phones:
+      - p
+      - t
+      - c
+      - q
+      ref: <P>
+    name: Stops
+    ref: <Stp>
+  - name: Fricatives
+    phones:
+    - f
+    - v
+    - s
+    - z
+    - x
+    - h
+    - j
+    ref: <Frc>
+  - name: Sonorants
+    phones:
+    - r
+    - l
+    - y
+    - "u\u0308"
+    ref: <Son>
+  - name: Nasals
+    phones:
+    - m
+    - n
+    - "\xF1"
+    ref: <N>
+  name: Consonants
+  ref: <C>
+- children:
+  - name: High vowels
+    phones:
+    - i
+    - u
+    ref: <V_High>
+  - name: Mid vowels
+    phones:
+    - e
+    - o
+    ref: <V_Mid>
+  - name: Low vowels
+    phones:
+    - a
+    ref: <V_Low>
+  name: Vowels
+  ref: <V>
+- name: Stress marker
+  phones:
+  - "\u0301"
+  ref: <Stress>
+kind: Inventory

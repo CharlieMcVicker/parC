@@ -938,7 +938,7 @@ def build_inflect_graph_for_root_regex(
             settings.append("infer")
         if non_deterministic_cleanup:
             settings.append("nd_cleanup")
-        if lexical_features:
+        if lexical_features and not infer_lexical_features:
             import hashlib
 
             if isinstance(lexical_features, (dict, frozendict)):
@@ -946,8 +946,8 @@ def build_inflect_graph_for_root_regex(
             else:
                 feats_tuple = tuple(sorted(lexical_features))
             feats_str = ",".join(
-                f"{f}={v}" if isinstance(v, str) else f"{f[0]}={f[1]}"
-                for f in feats_tuple
+                f"{f}={v}"
+                for f, v in feats_tuple
             )
             settings.append(f"lex_{hashlib.sha256(feats_str.encode()).hexdigest()[:8]}")
 
@@ -1027,6 +1027,7 @@ def build_inflect_graph_for_root_regex(
 
 def get_open_inflect_graph(
     paradigm_name: str,
+    lexical_features: FeatureComboType | dict[str, str] | None = None,
     non_deterministic_cleanup: bool = False,
     infer_lexical_features: bool = False,
     cache_key: str = None,
@@ -1038,6 +1039,19 @@ def get_open_inflect_graph(
         suffix_parts.append("infer")
     if non_deterministic_cleanup:
         suffix_parts.append("nd_cleanup")
+    if lexical_features and not infer_lexical_features:
+        import hashlib
+
+        if isinstance(lexical_features, (dict, frozendict)):
+            feats_tuple = tuple(sorted(lexical_features.items()))
+        else:
+            feats_tuple = tuple(sorted(lexical_features))
+        feats_str = ",".join(
+            f"{f}={v}"
+            for f, v in feats_tuple
+        )
+        suffix_parts.append(f"lex_{hashlib.sha256(feats_str.encode()).hexdigest()[:8]}")
+
     suffix = f"_{'_'.join(suffix_parts)}" if suffix_parts else ""
     open_inflect_key = f"{cache_key}_open_inflect{suffix}"
 
@@ -1046,6 +1060,7 @@ def get_open_inflect_graph(
         open_inflect = build_inflect_graph_for_root_regex(
             paradigm_name,
             "<Phone>*",
+            lexical_features=None if infer_lexical_features else lexical_features,
             cache_key=cache_key,
             non_deterministic_cleanup=non_deterministic_cleanup,
             infer_lexical_features=infer_lexical_features,
@@ -1287,6 +1302,9 @@ def inflect(
     root: str,
     feature_values: set[tuple[str, str]] | dict[str, str],
     name: str,
+    open_root: bool = False,
+    non_deterministic_cleanup: bool = False,
+    infer_lexical_features: bool = False,
 ) -> list[str]:
 
     if isinstance(feature_values, (dict, frozendict)):
@@ -1294,15 +1312,33 @@ def inflect(
 
     fixed_features = get_fixed_features_for_paradigm(name=name, kind="Paradigm")
     feature_values |= fixed_features
-    features = set(feature for feature, _ in feature_values)
+
+    paradigm_data = get_yaml_data_safe("Paradigm", name)
+    pos_name = paradigm_data.get("part_of_speech", "verb") if paradigm_data else "verb"
+    pos_data = get_yaml_data_safe(kind="PartOfSpeech", yaml_basename=pos_name)
+    lex_feats = set(pos_data.get("lexical_features", [])) if pos_data else set()
+
+    lexical_pairs = {pair for pair in feature_values if pair[0] in lex_feats}
+    non_lexical_pairs = {pair for pair in feature_values if pair[0] not in lex_feats}
+
+    inflectional_features = set(feature for feature, _ in non_lexical_pairs)
     expected_features = get_features_for_paradigm(name)
-    if not features == expected_features:
+    if not inflectional_features == expected_features:
         raise ValueError(
-            f"Feature set {features} does not match expected features {expected_features} for paradigm '{name}'."
+            f"Feature set {inflectional_features} does not match expected features {expected_features} for paradigm '{name}'."
         )
 
-    inflect_graph = get_inflect_graph(name)
-    feature_str = stringify_features(feature_values)
+    if open_root:
+        inflect_graph = get_open_inflect_graph(
+            name,
+            lexical_features=None if infer_lexical_features else lexical_pairs,
+            non_deterministic_cleanup=non_deterministic_cleanup,
+            infer_lexical_features=infer_lexical_features,
+        )
+    else:
+        inflect_graph = get_inflect_graph(name)
+
+    feature_str = stringify_features(lexical_pairs) + stringify_features(non_lexical_pairs)
     input_fsa = (
         pynini.concat(word_fsa(root), fsa(feature_str))
         if feature_str
@@ -1313,6 +1349,23 @@ def inflect(
     surface_forms = fsm_strings(output_lattice, strip_all_tags=True)
 
     return surface_forms
+
+
+def inflect_open_root(
+    root: str,
+    feature_values: set[tuple[str, str]] | dict[str, str],
+    name: str,
+    non_deterministic_cleanup: bool = False,
+    infer_lexical_features: bool = False,
+) -> list[str]:
+    return inflect(
+        root=root,
+        feature_values=feature_values,
+        name=name,
+        open_root=True,
+        non_deterministic_cleanup=non_deterministic_cleanup,
+        infer_lexical_features=infer_lexical_features,
+    )
 
 
 class InflectStage(NamedTuple):
