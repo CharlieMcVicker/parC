@@ -7,7 +7,7 @@ name = "parC"
 version = "0.1.0"
 description = "paradigm Compiler. Toolkit for morphological transduction based on paradigms"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
   "pandas",
   "tqdm",
