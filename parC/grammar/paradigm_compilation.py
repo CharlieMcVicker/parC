@@ -1160,6 +1160,7 @@ def build_search_lexicon_and_leftfactor(
 _FST_KINDS = ("inflect", "parse", "search_lexicon", "search_left_factor")
 
 
+@observed_cache([get_yaml_dir()])
 def get_paradigm_cache_key(paradigm_name: str) -> str:
     config_dirs = [
         kind_dir("Paradigm"),
@@ -1196,6 +1197,7 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
     )
 
 
+@functools.lru_cache(maxsize=32)
 def _load_paradigm_cached(
     cache_key: str,
 ) -> tuple[pynini.Fst, pynini.Fst, pynini.Fst, pynini.Fst] | None:
@@ -1236,6 +1238,7 @@ def _save_paradigm_cached(
         os.path.join(CACHE_DIR, f"{cache_key}_search_left_factor.fst")
     )
     record_cache_save(cache_key)
+    _load_paradigm_cached.cache_clear()
 
 
 @observed_cache([get_yaml_dir()])

@@ -344,7 +344,7 @@ def max_directory_mtime(directory: str):
         now = time.monotonic()
         if directory in _directory_mtimes_cache:
             cached_time, mtime = _directory_mtimes_cache[directory]
-            if now - cached_time < 1.0:
+            if now - cached_time < 0.1:
                 return mtime
     yaml_glob = glob(os.path.join(directory, "*.yaml"))
     csv_glob = glob(os.path.join(directory, "*.csv"))
@@ -354,34 +354,38 @@ def max_directory_mtime(directory: str):
     return mtime
 
 
+def _make_hashable(val):
+    if isinstance(val, (str, int, float, bool, bytes, type(None))):
+        return val
+    elif hasattr(val, "_fields"):
+        return val
+    elif isinstance(val, (set, frozenset)):
+        return frozenset(_make_hashable(x) for x in val)
+    elif isinstance(val, (list, tuple)):
+        return tuple(_make_hashable(x) for x in val)
+    elif isinstance(val, (dict, frozendict)):
+        return frozendict({_make_hashable(k): _make_hashable(v) for k, v in val.items()})
+    return val
+
+
 def get_hashable_args_and_kwargs(args, kwargs):
     hashable_args = []
     for arg in args:
-        hashable_arg = arg
-        if type(arg) is list:
-            hashable_arg = tuple(arg)
-        elif type(arg) is dict:
-            hashable_arg = frozendict(arg)
+        h_arg = _make_hashable(arg)
         try:
-            hash(hashable_arg)
+            hash(h_arg)
         except Exception as e:
-            raise ValueError(f"Could not hash kwarg {value} with key {key}: {e}")
-
-        hashable_args.append(hashable_arg)
+            raise ValueError(f"Could not hash arg {arg}: {e}")
+        hashable_args.append(h_arg)
 
     hashable_kwargs = {}
     for key, value in kwargs.items():
-        hashable_value = value
-        if type(value) is list:
-            hashable_value = tuple(value)
-        elif type(value) is dict:
-            hashable_value = frozendict(value)
+        h_val = _make_hashable(value)
         try:
-            hash(hashable_value)
+            hash(h_val)
         except Exception as e:
-            raise ValueError(f"Could not hash kwarg {value} with key {key}: {e}")
-
-        hashable_kwargs[key] = hashable_value
+            raise ValueError(f"Could not hash kwarg {key}={value}: {e}")
+        hashable_kwargs[key] = h_val
 
     return hashable_args, hashable_kwargs
 
@@ -418,7 +422,11 @@ def observed_cache(directories: list[str]):
 
             return cached_func(*args, **kwargs)
 
-        wrapper.cache_clear = cached_func.cache_clear
+        def clear_wrapper_cache():
+            _directory_mtimes_cache.clear()
+            cached_func.cache_clear()
+
+        wrapper.cache_clear = clear_wrapper_cache
         wrapper.cache_info = cached_func.cache_info
         return wrapper
 
