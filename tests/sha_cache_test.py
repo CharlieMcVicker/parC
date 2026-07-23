@@ -132,7 +132,8 @@ def test_open_parse_graph_and_subcomponent_caching():
 
 
 def test_incremental_composition_caching():
-    from parC.grammar.paradigm_compilation import get_open_parse_graph, get_paradigm_cache_key
+    from parC.grammar.paradigm_compilation import get_open_parse_graph, get_paradigm_cache_key, clear_all_caches
+    clear_all_caches()
     import glob
     
     paradigm_name = "verb_a_stem"

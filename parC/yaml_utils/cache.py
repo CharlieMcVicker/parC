@@ -391,27 +391,11 @@ def get_hashable_args_and_kwargs(args, kwargs):
 
 
 def observed_cache(directories: list[str]):
-    directory_mtimes = {
-        directory: max_directory_mtime(directory) for directory in directories
-    }
-
     def decorator(func):
         cached_func = lru_cache(maxsize=128)(func)
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            clear_cache = False
-            for directory, mtime in directory_mtimes.items():
-                new_mtime = max_directory_mtime(directory)
-                if new_mtime > mtime:
-                    directory_mtimes[directory] = new_mtime
-                    clear_cache = True
-            if clear_cache:
-                logger.info(
-                    f"Invalidated cache for {func.__name__}, rebuilding output..."
-                )
-                cached_func.cache_clear()
-
             try:
                 args, kwargs = get_hashable_args_and_kwargs(args, kwargs)
             except Exception as e:

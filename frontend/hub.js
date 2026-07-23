@@ -1,4 +1,4 @@
-import { fetchGrammarStats } from './api.js';
+import { fetchGrammarStats, recompile } from './api.js';
 
 let lastHealth = null;
 let lastStats = null;
@@ -72,7 +72,19 @@ async function poll() {
   }
 }
 
-recompileBtn.addEventListener('click', poll);
+async function handleRecompile() {
+  recompileBtn.disabled = true;
+  try {
+    await recompile();
+    await poll();
+  } catch (err) {
+    console.error("Recompile failed", err);
+  } finally {
+    recompileBtn.disabled = false;
+  }
+}
+
+recompileBtn.addEventListener('click', handleRecompile);
 setInterval(poll, 5000);
 poll();
 

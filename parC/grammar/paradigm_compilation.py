@@ -1055,6 +1055,9 @@ def get_open_inflect_graph(
     suffix = f"_{'_'.join(suffix_parts)}" if suffix_parts else ""
     open_inflect_key = f"{cache_key}_open_inflect{suffix}"
 
+    if open_inflect_key in _in_memory_fst_cache:
+        return _in_memory_fst_cache[open_inflect_key]
+
     open_inflect = get_cached_fst(open_inflect_key)
     if open_inflect is None:
         open_inflect = build_inflect_graph_for_root_regex(
@@ -1065,9 +1068,9 @@ def get_open_inflect_graph(
             non_deterministic_cleanup=non_deterministic_cleanup,
             infer_lexical_features=infer_lexical_features,
         )
+        save_cached_fst(open_inflect_key, open_inflect)
 
-    save_cached_fst(open_inflect_key, open_inflect)
-
+    _in_memory_fst_cache[open_inflect_key] = open_inflect
     return open_inflect
 
 
@@ -1090,9 +1093,13 @@ def get_open_parse_graph(
     suffix = f"_{'_'.join(suffix_parts)}" if suffix_parts else ""
     open_parse_key = f"{cache_key}_open_parse{suffix}"
 
+    if open_parse_key in _in_memory_fst_cache:
+        return _in_memory_fst_cache[open_parse_key]
+
     open_parse = get_cached_fst(open_parse_key)
     if open_parse is not None:
         logger.debug(f"Open parse graph cache HIT for paradigm {paradigm_name}")
+        _in_memory_fst_cache[open_parse_key] = open_parse
         return open_parse
 
     logger.debug(f"Open parse graph cache MISS for paradigm {paradigm_name}")
@@ -1106,6 +1113,7 @@ def get_open_parse_graph(
 
     open_parse = build_parse_graph(open_inflect)
     save_cached_fst(open_parse_key, open_parse)
+    _in_memory_fst_cache[open_parse_key] = open_parse
     return open_parse
 
 
@@ -1197,6 +1205,9 @@ def get_paradigm_cache_key(paradigm_name: str) -> str:
     )
 
 
+_in_memory_fst_cache = {}
+
+
 @functools.lru_cache(maxsize=32)
 def _load_paradigm_cached(
     cache_key: str,
@@ -1245,20 +1256,27 @@ def _save_paradigm_cached(
 def _get_or_build(
     paradigm_name: str, graph_type: str, force_rebuild: bool = False
 ) -> pynini.Fst:
-    graph_index = _FST_KINDS.index(graph_type)
     cache_key = get_paradigm_cache_key(paradigm_name)
+    cache_key_full = (cache_key, graph_type)
+    if not force_rebuild and cache_key_full in _in_memory_fst_cache:
+        return _in_memory_fst_cache[cache_key_full]
+
+    graph_index = _FST_KINDS.index(graph_type)
     if not force_rebuild:
         loaded = _load_paradigm_cached(cache_key)
         if loaded is not None:
-            return loaded[graph_index]
+            for k, fst in zip(_FST_KINDS, loaded):
+                _in_memory_fst_cache[(cache_key, k)] = fst
+            return _in_memory_fst_cache[cache_key_full]
 
     inflect = build_inflect_graph(paradigm_name)
     parse = build_parse_graph(inflect)
     search_lexicon, search_left_factor = build_search_lexicon_and_leftfactor(inflect)
     _save_paradigm_cached(cache_key, inflect, parse, search_lexicon, search_left_factor)
 
-    graph_tuple = (inflect, parse, search_lexicon, search_left_factor)
-    return graph_tuple[graph_index]
+    for k, fst in zip(_FST_KINDS, (inflect, parse, search_lexicon, search_left_factor)):
+        _in_memory_fst_cache[(cache_key, k)] = fst
+    return _in_memory_fst_cache[cache_key_full]
 
 
 def get_inflect_graph(paradigm_name: str) -> pynini.Fst:
@@ -1483,3 +1501,58 @@ def search(
         return parses
 
     return hits
+
+
+def clear_all_caches():
+    """Clear all in-memory FST caches, LRU caches, and file hash caches."""
+    _in_memory_fst_cache.clear()
+
+    from parC.yaml_utils.cache import read_and_sha256_file
+    read_and_sha256_file.cache_clear()
+
+    from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
+    _get_yaml_data_safe_cached.cache_clear()
+
+    from parC.grammar.transducer_compilation import (
+        get_rule_fst,
+        get_marker_fst,
+        get_gated_marker_fst,
+    )
+    get_rule_fst.cache_clear()
+    get_marker_fst.cache_clear()
+    get_gated_marker_fst.cache_clear()
+
+    from parC.grammar.acceptor_compilation import (
+        get_symbol_table,
+        get_special_fsas,
+        get_token_map,
+        get_pattern_fsts,
+        get_feature_acceptor_fsts,
+        fsa,
+        word_fsa,
+        wordlist_fsa,
+    )
+    get_symbol_table.cache_clear()
+    get_special_fsas.cache_clear()
+    get_token_map.cache_clear()
+    get_pattern_fsts.cache_clear()
+    get_feature_acceptor_fsts.cache_clear()
+    fsa.cache_clear()
+    word_fsa.cache_clear()
+    wordlist_fsa.cache_clear()
+
+    get_roots_for_paradigm.cache_clear()
+    get_paradigm_cache_key.cache_clear()
+    parse.cache_clear()
+    inflect.cache_clear()
+    inflect_stages.cache_clear()
+    search.cache_clear()
+
+    from parC.grammar.marker_resolution import (
+        _precomputed_paradigm_markers_cache,
+        _paradigm_cache_key_cache,
+        _get_paradigm_cache_key_cached,
+    )
+    _precomputed_paradigm_markers_cache.clear()
+    _paradigm_cache_key_cache.clear()
+    _get_paradigm_cache_key_cached.cache_clear()

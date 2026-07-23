@@ -103,4 +103,13 @@ export async function runInflection(name, root, features) {
   return res.json();
 }
 
+export async function recompile() {
+  const res = await fetch("/recompile", { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? `Recompile failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 

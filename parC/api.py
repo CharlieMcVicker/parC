@@ -362,4 +362,15 @@ def api_search(req: SearchRequest):
     return {"parses": parsed_hits}
 
 
+@app.post("/recompile")
+def api_recompile():
+    try:
+        from parC.grammar.paradigm_compilation import clear_all_caches
+        clear_all_caches()
+        return {"status": "success", "message": "All caches cleared successfully."}
+    except Exception as e:
+        logger.exception(f"Error during cache clearing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 app.mount("/", StaticFiles(directory="frontend", html=True), name="static")

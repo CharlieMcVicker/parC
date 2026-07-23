@@ -614,17 +614,8 @@ def test_feature_value_acceptors():
 
     try:
         # Clear lru_cache and observed caches
-        from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
-        from parC.grammar.acceptor_compilation import (
-            get_feature_acceptor_fsts,
-            get_pattern_fsts,
-            get_symbol_table,
-        )
-
-        _get_yaml_data_safe_cached.cache_clear()
-        get_feature_acceptor_fsts.cache_clear()
-        get_pattern_fsts.cache_clear()
-        get_symbol_table.cache_clear()
+        from parC.grammar.paradigm_compilation import clear_all_caches
+        clear_all_caches()
 
         # Let's verify feature acceptors compilation
         feature_acceptors = get_feature_acceptor_fsts()
@@ -682,17 +673,8 @@ def test_feature_value_acceptors():
                     os.remove(p)
                 except OSError:
                     pass
-        from parC.yaml_utils.yaml_server import _get_yaml_data_safe_cached
-        from parC.grammar.acceptor_compilation import (
-            get_feature_acceptor_fsts,
-            get_pattern_fsts,
-            get_symbol_table,
-        )
-
-        _get_yaml_data_safe_cached.cache_clear()
-        get_feature_acceptor_fsts.cache_clear()
-        get_pattern_fsts.cache_clear()
-        get_symbol_table.cache_clear()
+        from parC.grammar.paradigm_compilation import clear_all_caches
+        clear_all_caches()
 
 
 def test_non_deterministic_cleanup():

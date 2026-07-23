@@ -44,6 +44,8 @@ def restore_diphthongization_rule():
     # ensure original YAML data restored at test completion
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
+    from parC.grammar.paradigm_compilation import clear_all_caches
+    clear_all_caches()
 
 
 @pytest.fixture
@@ -57,6 +59,8 @@ def restore_vowel_patterns():
     # ensure original YAML data restored at test completion
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
+    from parC.grammar.paradigm_compilation import clear_all_caches
+    clear_all_caches()
 
 
 @pytest.fixture
@@ -70,6 +74,8 @@ def restore_domains_patterns():
     # ensure original YAML data restored at test completion
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
+    from parC.grammar.paradigm_compilation import clear_all_caches
+    clear_all_caches()
 
 
 @pytest.fixture
@@ -83,6 +89,8 @@ def restore_segments_inventory():
     # ensure original YAML data restored at test completion
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
+    from parC.grammar.paradigm_compilation import clear_all_caches
+    clear_all_caches()
 
 
 def test_rule_invalidation_from_rule_file(restore_diphthongization_rule):
@@ -105,10 +113,12 @@ def test_rule_invalidation_from_rule_file(restore_diphthongization_rule):
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
 
+    from parC.grammar.paradigm_compilation import clear_all_caches
+    clear_all_caches()
+
     new_rule_fst = get_rule_fst("diphthongization")
 
     assert new_rule_fst is not orig_rule_fst
-
     new_result = rule_input() @ new_rule_fst
     new_result = fsm_strings(new_result)
 
@@ -127,6 +137,8 @@ def test_rule_invalidation_from_rule_file(restore_diphthongization_rule):
 
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
+
+    clear_all_caches()
 
     new_rule_fst = get_rule_fst("diphthongization")
 
@@ -158,10 +170,12 @@ def test_rule_invalidation_from_pattern_file(restore_domains_patterns):
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
 
+    from parC.grammar.paradigm_compilation import clear_all_caches
+    clear_all_caches()
+
     new_rule_fst = get_rule_fst("diphthongization")
 
     assert new_rule_fst is not orig_rule_fst
-
     new_result = rule_input() @ new_rule_fst
     new_result = fsm_strings(new_result)
 
@@ -177,6 +191,8 @@ def test_rule_invalidation_from_pattern_file(restore_domains_patterns):
 
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
+
+    clear_all_caches()
 
     new_rule_fst = get_rule_fst("diphthongization")
 
@@ -213,10 +229,12 @@ def test_rule_invalidation_from_inventory_file(restore_segments_inventory):
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
 
+    from parC.grammar.paradigm_compilation import clear_all_caches
+    clear_all_caches()
+
     new_rule_fst = get_rule_fst("diphthongization")
 
     assert new_rule_fst is not orig_rule_fst
-
     new_result = rule_input() @ new_rule_fst
     new_result = fsm_strings(new_result)
 
@@ -235,6 +253,8 @@ def test_rule_invalidation_from_inventory_file(restore_segments_inventory):
 
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
+
+    clear_all_caches()
 
     new_rule_fst = get_rule_fst("diphthongization")
 
@@ -270,6 +290,9 @@ def test_pattern_invalidation_from_pattern_file(restore_vowel_patterns):
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
 
+    from parC.grammar.paradigm_compilation import clear_all_caches
+    clear_all_caches()
+
     new_pattern = get_pattern_fsts()[pattern_str]
     new_fsa = fsa(pattern_str)
 
@@ -294,6 +317,8 @@ def test_pattern_invalidation_from_pattern_file(restore_vowel_patterns):
 
     with open(yaml_path, "w") as f:
         yaml.dump(yaml_data, f)
+
+    clear_all_caches()
 
     new_pattern = get_pattern_fsts()[pattern_str]
     new_fsa = fsa(pattern_str)
