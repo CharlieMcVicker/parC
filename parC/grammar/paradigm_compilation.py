@@ -1106,8 +1106,8 @@ def get_open_parse_graph(
 
     open_inflect = get_open_inflect_graph(
         paradigm_name,
-        non_deterministic_cleanup,
-        infer_lexical_features,
+        non_deterministic_cleanup=non_deterministic_cleanup,
+        infer_lexical_features=infer_lexical_features,
         cache_key=cache_key,
     )
 
