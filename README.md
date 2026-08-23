@@ -21,37 +21,43 @@
 ```mermaid
 flowchart TD
     subgraph PortsAdapters["Upfront I/O Adapter (config_loader.py)"]
-        CL["load_grammar_config() / load_paradigm_config()"] -->|GrammarConfig / ParadigmConfig| PureLayer
+        CL["load_grammar_config / load_paradigm_config"]
     end
 
-    subgraph PureLayer["Pure Blueprint Domain Layer"]
-        subgraph Layer1["Layer 1: Alphabet & Symbol Space"]
-            L1["AlphabetBlueprint"] -->|symbol tables & special FSAs| L1_Out["SymbolTable / Acceptors"]
-        end
-
-        subgraph Layer2["Layer 2: Pattern Regex Acceptors"]
-            L2["PatternLibraryBlueprint"] -->|named pattern acceptors| L2_Out["Pattern FST Dictionary"]
-        end
-
-        subgraph Layer3["Layer 3: Phonological & Exponence Operations"]
-            L3a["RulePipelineBlueprint"] -->|cdrewrite transducers| L3_Out["Rule Rewrite FSTs"]
-            L3b["MarkerLibraryBlueprint"] -->|morpheme exponence| L3_Out2["Marker Transducers"]
-        end
-
-        subgraph Layer4["Layer 4: Morphotactic Stage Cascade"]
-            L4["StageCascadeBlueprint"] -->|stage-gated composition| L4_Out["Open Inflection Graph FST"]
-        end
-
-        subgraph Layer5["Layer 5: Inversion & Search Engine"]
-            L5["ParsingEngineBlueprint"] -->|inversion & edit lattice| L5_Out["Open Parse & Search Lattice FSTs"]
-        end
+    subgraph Layer1["Layer 1: Alphabet & Symbol Space"]
+        L1["AlphabetBlueprint"] -->|symbol tables & special FSAs| L1_Out["SymbolTable / Acceptors"]
     end
 
-    Layer1 --> Layer2
-    Layer1 --> Layer3
-    Layer2 --> Layer3
-    Layer3 --> Layer4
-    Layer4 --> Layer5
+    subgraph Layer2["Layer 2: Pattern Regex Acceptors"]
+        L2["PatternLibraryBlueprint"] -->|named pattern acceptors| L2_Out["Pattern FST Dictionary"]
+    end
+
+    subgraph Layer3["Layer 3: Phonological & Exponence Operations"]
+        L3a["RulePipelineBlueprint"] -->|cdrewrite transducers| L3_Out["Rule Rewrite FSTs"]
+        L3b["MarkerLibraryBlueprint"] -->|morpheme exponence| L3_Out2["Marker Transducers"]
+    end
+
+    subgraph Layer4["Layer 4: Morphotactic Stage Cascade"]
+        L4["StageCascadeBlueprint"] -->|stage-gated composition| L4_Out["Open Inflection Graph FST"]
+    end
+
+    subgraph Layer5["Layer 5: Inversion & Search Engine"]
+        L5["ParsingEngineBlueprint"] -->|inversion & edit lattice| L5_Out["Open Parse & Search Lattice FSTs"]
+    end
+
+    CL -->|GrammarConfig / ParadigmConfig| L1
+    CL --> L2
+    CL --> L3a
+    CL --> L3b
+    CL --> L4
+    L1 --> L2
+    L1 --> L3a
+    L1 --> L3b
+    L2 --> L3a
+    L2 --> L3b
+    L3a --> L4
+    L3b --> L4
+    L4 --> L5
 ```
 
 ### Blueprints Summary
