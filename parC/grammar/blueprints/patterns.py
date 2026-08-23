@@ -16,6 +16,7 @@ from parC.grammar.acceptor_compilation import (
     get_feature_acceptor_fsts,
     get_pattern_fsts,
 )
+from parC.grammar.config_loader import GrammarConfig
 from parC.grammar.blueprints.alphabet import AlphabetBlueprint
 from parC.yaml_utils.models import Pattern
 from parC.yaml_utils.yaml_server import get_patterns
@@ -37,8 +38,10 @@ class PatternLibraryBlueprint:
         self._pattern_acceptors = pattern_acceptors
 
     @classmethod
-    def from_config(cls) -> PatternLibraryBlueprint:
-        """Constructs PatternLibraryBlueprint by reading global config once."""
+    def from_config(cls, config: GrammarConfig | None = None) -> PatternLibraryBlueprint:
+        """Constructs PatternLibraryBlueprint from a pre-loaded GrammarConfig or by reading global config."""
+        if config is not None:
+            return cls(patterns=config.patterns)
         return cls(patterns=get_patterns())
 
     def get_all_pattern_acceptors(

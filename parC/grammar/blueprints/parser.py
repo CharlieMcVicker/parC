@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pynini
 
+from parC.grammar.config_loader import GrammarConfig, ParadigmConfig
 from parC.grammar.blueprints.alphabet import AlphabetBlueprint
 from parC.grammar.blueprints.paradigms import StageCascadeBlueprint
 from parC.grammar.blueprints.patterns import PatternLibraryBlueprint
@@ -42,6 +43,8 @@ class ParsingEngineBlueprint:
         patterns: PatternLibraryBlueprint | None = None,
         rules: RulePipelineBlueprint | None = None,
         markers: MarkerLibraryBlueprint | None = None,
+        grammar_config: GrammarConfig | None = None,
+        paradigm_config: ParadigmConfig | None = None,
     ) -> ParsingEngineBlueprint:
         """Constructs ParsingEngineBlueprint for a named paradigm."""
         cascade = StageCascadeBlueprint.from_paradigm(
@@ -50,6 +53,8 @@ class ParsingEngineBlueprint:
             patterns=patterns,
             rules=rules,
             markers=markers,
+            grammar_config=grammar_config,
+            paradigm_config=paradigm_config,
         )
         return cls(cascade=cascade)
 

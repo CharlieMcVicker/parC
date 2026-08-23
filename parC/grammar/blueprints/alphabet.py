@@ -14,6 +14,7 @@ from parC.grammar.acceptor_compilation import (
     get_special_fsas,
     get_symbol_table,
 )
+from parC.grammar.config_loader import GrammarConfig
 from parC.yaml_utils.models import Feature, Inventory
 from parC.yaml_utils.yaml_server import get_feature_array, get_inventory_items
 
@@ -38,8 +39,13 @@ class AlphabetBlueprint:
         self._special_fsas = special_fsas
 
     @classmethod
-    def from_config(cls) -> AlphabetBlueprint:
-        """Constructs AlphabetBlueprint by reading global config once."""
+    def from_config(cls, config: GrammarConfig | None = None) -> AlphabetBlueprint:
+        """Constructs AlphabetBlueprint from a pre-loaded GrammarConfig or by reading global config."""
+        if config is not None:
+            return cls(
+                inventory=config.inventory,
+                features=config.features,
+            )
         return cls(
             inventory=get_inventory_items(),
             features=get_feature_array(),

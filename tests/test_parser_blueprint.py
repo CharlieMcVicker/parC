@@ -42,6 +42,16 @@ def test_parsing_engine_blueprint_from_paradigm():
     assert pe_bp_custom.markers is mar
 
 
+def test_parsing_engine_blueprint_from_grammar_config():
+    """Test ParsingEngineBlueprint using pre-loaded GrammarConfig."""
+    from parC.grammar.config_loader import load_grammar_config
+    cfg = load_grammar_config()
+    pe_bp = ParsingEngineBlueprint.from_paradigm("verb_a_stem", grammar_config=cfg)
+    parse_graph = pe_bp.build_open_parse_graph()
+    assert isinstance(parse_graph, pynini.Fst)
+    assert parse_graph.num_states() > 0
+
+
 def test_build_open_parse_graph():
     """Test build_open_parse_graph produces inverted parse graph matching build_parse_graph(open_inflect)."""
     pe_bp = ParsingEngineBlueprint.from_paradigm("verb_a_stem")

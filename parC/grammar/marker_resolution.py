@@ -20,6 +20,7 @@ from parC.yaml_utils.models import (
     PrincipalPartMarker,
     resolve_marker,
 )
+from parC.grammar.config_loader import ParadigmConfig
 from parC.yaml_utils.yaml_server import (
     get_markers,
     get_yaml_data_safe,
@@ -131,10 +132,23 @@ def get_paradigm_cache_key(paradigm_name: str) -> tuple:
     return res
 
 
-def get_sorted_markers_for_paradigm(paradigm_name: str) -> dict:
+def get_sorted_markers_for_paradigm(
+    paradigm_name: str,
+    paradigm_config: ParadigmConfig | None = None,
+) -> dict:
     """
     Precomputes, resolves, and caches all markers in the paradigm sorted by their stage order.
     """
+    if paradigm_config is not None:
+        return {
+            "all_markers_sorted": list(paradigm_config.sorted_markers),
+            "contingent_by_file": paradigm_config.contingent_by_file,
+            "contingent_features": paradigm_config.contingent_features,
+            "regular_by_feature": paradigm_config.regular_by_feature,
+            "global_markers": list(paradigm_config.global_markers),
+            "lexical_feature_names": paradigm_config.lexical_feature_names,
+        }
+
     key = get_paradigm_cache_key(paradigm_name)
     if key in _precomputed_paradigm_markers_cache:
         return _precomputed_paradigm_markers_cache[key]
@@ -264,6 +278,7 @@ def get_markers_for_paradigm(
     root: str | None = None,
     lexical_features: FeatureComboType | dict[str, str] | None = None,
     paradigm_data: dict = None,
+    paradigm_config: ParadigmConfig | None = None,
 ) -> list[Marker] | list[tuple[Marker, FeatureComboType | str]]:
     """
     Get all markers for a requested feature set for a given paradigm.
@@ -280,7 +295,7 @@ def get_markers_for_paradigm(
         else (frozenset(lexical_features) if lexical_features else frozenset())
     )
 
-    paradigm_hash_key = get_paradigm_cache_key(paradigm_name)
+    paradigm_hash_key = get_paradigm_cache_key(paradigm_name) if paradigm_config is None else paradigm_name
     cache_key = (
         fv_key,
         paradigm_name,
@@ -297,11 +312,11 @@ def get_markers_for_paradigm(
     # avoid side effects
     feature_values = feature_values.copy()
 
-    precomputed = get_sorted_markers_for_paradigm(paradigm_name)
+    precomputed = get_sorted_markers_for_paradigm(paradigm_name, paradigm_config=paradigm_config)
     lexical_feature_names = precomputed["lexical_feature_names"]
 
     if paradigm_data is None:
-        paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
+        paradigm_data = paradigm_config.paradigm_data if paradigm_config else get_yaml_data_safe("Paradigm", paradigm_name)
 
     # ignore fixed features
     fixed_features = get_fixed_features_for_paradigm(

@@ -36,6 +36,17 @@ def test_stage_cascade_blueprint_from_paradigm():
     assert sc_bp_custom.markers is mar
 
 
+def test_stage_cascade_blueprint_from_grammar_config():
+    """Test StageCascadeBlueprint using pre-loaded GrammarConfig / ParadigmConfig."""
+    from parC.grammar.config_loader import load_grammar_config
+    cfg = load_grammar_config()
+    sc_bp = StageCascadeBlueprint.from_paradigm("verb_a_stem", grammar_config=cfg)
+    assert sc_bp.paradigm_config is cfg.paradigms["verb_a_stem"]
+    graph = sc_bp.build_open_inflect_graph()
+    assert isinstance(graph, pynini.Fst)
+    assert graph.num_states() > 0
+
+
 def test_get_tag_domain_acceptor():
     """Test get_tag_domain_acceptor returns valid FST for a paradigm."""
     sc_bp = StageCascadeBlueprint.from_paradigm("verb_a_stem")

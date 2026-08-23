@@ -34,6 +34,17 @@ def test_alphabet_blueprint_default():
     assert "sigma_star" in special_fsas
 
 
+def test_alphabet_blueprint_from_grammar_config():
+    """Test AlphabetBlueprint using load_grammar_config upfront."""
+    from parC.grammar.config_loader import load_grammar_config
+    cfg = load_grammar_config()
+    bp = AlphabetBlueprint.from_config(cfg)
+
+    syms = bp.get_symbol_table()
+    assert isinstance(syms, pynini.SymbolTable)
+    assert syms.write_to_string() == get_symbol_table().write_to_string()
+
+
 def test_alphabet_blueprint_custom_inventory():
     """Test AlphabetBlueprint with explicit custom inventory and feature definitions."""
     custom_inv = Inventory(item_map={}, phones=("a", "b", "k"), tags=("+N",))

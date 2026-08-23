@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pynini
 
+from parC.grammar.config_loader import GrammarConfig, ParadigmConfig, load_paradigm_config
 from parC.grammar.blueprints.alphabet import AlphabetBlueprint
 from parC.grammar.blueprints.patterns import PatternLibraryBlueprint
 from parC.grammar.blueprints.transducers import (
@@ -32,17 +33,24 @@ class StageCascadeBlueprint:
 
     def __init__(
         self,
-        paradigm_name: str,
-        paradigm_data: dict,
-        feature_map: dict[str, list[str]],
+        paradigm_config: ParadigmConfig | str,
         alphabet: AlphabetBlueprint,
         patterns: PatternLibraryBlueprint,
         rules: RulePipelineBlueprint,
         markers: MarkerLibraryBlueprint,
+        paradigm_data: dict | None = None,
+        feature_map: dict[str, tuple[str, ...]] | None = None,
     ) -> None:
-        self.paradigm_name = paradigm_name
-        self.paradigm_data = paradigm_data
-        self.feature_map = feature_map
+        if isinstance(paradigm_config, ParadigmConfig):
+            self.paradigm_config = paradigm_config
+            self.paradigm_name = paradigm_config.paradigm_name
+            self.paradigm_data = paradigm_config.paradigm_data
+            self.feature_map = paradigm_config.feature_map
+        else:
+            self.paradigm_config = None
+            self.paradigm_name = paradigm_config
+            self.paradigm_data = paradigm_data
+            self.feature_map = feature_map
         self.alphabet = alphabet
         self.patterns = patterns
         self.rules = rules
@@ -56,22 +64,23 @@ class StageCascadeBlueprint:
         patterns: PatternLibraryBlueprint | None = None,
         rules: RulePipelineBlueprint | None = None,
         markers: MarkerLibraryBlueprint | None = None,
+        grammar_config: GrammarConfig | None = None,
+        paradigm_config: ParadigmConfig | None = None,
     ) -> StageCascadeBlueprint:
-        """Factory method to construct StageCascadeBlueprint for a named paradigm."""
-        paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-        if paradigm_data is None:
-            raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
-        feature_map = get_feature_map()
+        """Factory method to construct StageCascadeBlueprint for a named paradigm or ParadigmConfig."""
+        if paradigm_config is None and grammar_config is not None:
+            paradigm_config = grammar_config.paradigms.get(paradigm_name)
 
-        alph = alphabet or AlphabetBlueprint.from_config()
-        pats = patterns or PatternLibraryBlueprint.from_config()
-        ruls = rules or RulePipelineBlueprint.from_config()
+        if paradigm_config is None:
+            paradigm_config = load_paradigm_config(paradigm_name)
+
+        alph = alphabet or AlphabetBlueprint.from_config(grammar_config)
+        pats = patterns or PatternLibraryBlueprint.from_config(grammar_config)
+        ruls = rules or RulePipelineBlueprint.from_config(grammar_config)
         mars = markers or MarkerLibraryBlueprint.from_config()
 
         return cls(
-            paradigm_name=paradigm_name,
-            paradigm_data=paradigm_data,
-            feature_map=feature_map,
+            paradigm_config=paradigm_config,
             alphabet=alph,
             patterns=pats,
             rules=ruls,
@@ -86,7 +95,9 @@ class StageCascadeBlueprint:
         lex_set = (
             lexical_combos if lexical_combos is not None else frozenset([frozenset()])
         )
-        active_combos = _get_active_combos_for_paradigm(self.paradigm_name, lex_set)
+        active_combos = _get_active_combos_for_paradigm(
+            self.paradigm_name, lex_set, paradigm_config=self.paradigm_config
+        )
         syms = self.alphabet.get_symbol_table()
 
         tag_fsas = {}
@@ -127,7 +138,8 @@ class StageCascadeBlueprint:
         from collections import defaultdict
 
         marker_to_combinations = defaultdict(list)
-        precomputed = get_sorted_markers_for_paradigm(self.paradigm_name)
+        marker_to_combinations = defaultdict(list)
+        precomputed = get_sorted_markers_for_paradigm(self.paradigm_name, paradigm_config=self.paradigm_config)
         for pm, fs in precomputed["all_markers_sorted"]:
             fs_frozen = (
                 frozenset(fs.items())
@@ -162,6 +174,7 @@ class StageCascadeBlueprint:
             tag_fsas=tag_fsas,
             ordered_features=ordered_features,
             cache_key=cache_key,
+            feature_map=self.feature_map,
         )
         stages = get_cached_fst(f"{cache_key}_stages")
         if stages is not None:
@@ -289,6 +302,7 @@ class StageCascadeBlueprint:
             is_open_root=is_open_root,
             base_cache_key=base_cache_key,
             non_deterministic_cleanup=non_deterministic_cleanup,
+            paradigm_config=self.paradigm_config,
         )
         if cache_key and is_open_root:
             _in_memory_fst_cache[f"{cache_key}_open_inflect"] = res

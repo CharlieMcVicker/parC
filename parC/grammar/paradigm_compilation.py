@@ -51,6 +51,7 @@ from parC.grammar.acceptor_compilation import (
     get_symbol_table,
     filter_strings_by_pattern,
 )
+from parC.grammar.config_loader import ParadigmConfig
 from parC.grammar.marker_resolution import (
     get_features_for_paradigm,
     get_markers_for_paradigm,
@@ -340,6 +341,7 @@ def _compile_stage_cascade(
     tag_fsas: dict[str, pynini.Fst],
     ordered_features: list[str],
     cache_key: str = None,
+    feature_map: dict | None = None,
 ) -> pynini.Fst:
     """
     Compiles the sequential stage-by-stage composition cascade using gated transducers.
@@ -417,7 +419,8 @@ def _compile_stage_cascade(
 
         logger.info(f"[PERF][stage cascade] stem domain acceptor built")
 
-        feature_map = get_feature_map()
+        if feature_map is None:
+            feature_map = get_feature_map()
 
         # Apply sequential composition cascade by stage
         gated_fsts = []
@@ -523,18 +526,18 @@ def _compile_stage_cascade(
     return composed_fst
 
 
-@functools.lru_cache(maxsize=128)
 def _get_active_combos_for_paradigm(
     paradigm_name: str,
     lexical_combos: frozenset[frozenset[tuple[str, str]]],
+    paradigm_config: ParadigmConfig | None = None,
 ) -> list[frozenset[tuple[str, str]]]:
     """
     Identify active inflectional feature combos that are referenced/mapped in the markers
     by checking if they can be successfully exponed/resolved, computed directly from
     marker definitions.
     """
-    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-    precomputed = get_sorted_markers_for_paradigm(paradigm_name)
+    paradigm_data = paradigm_config.paradigm_data if paradigm_config else get_yaml_data_safe("Paradigm", paradigm_name)
+    precomputed = get_sorted_markers_for_paradigm(paradigm_name, paradigm_config=paradigm_config)
 
     fixed_features = frozenset(
         get_fixed_features_for_paradigm(
@@ -677,6 +680,7 @@ def _compile_inflect_graph_shared(
     is_open_root: bool = False,
     base_cache_key: str = None,
     non_deterministic_cleanup: bool = False,
+    paradigm_config: ParadigmConfig | None = None,
 ) -> pynini.Fst:
     from collections import defaultdict
 
@@ -708,12 +712,13 @@ def _compile_inflect_graph_shared(
     active_combos = _get_active_combos_for_paradigm(
         paradigm_name,
         lex_combos_set_for_active,
+        paradigm_config=paradigm_config,
     )
 
     # 1. Populate marker_to_combinations statically from precomputed markers
     from parC.grammar.marker_resolution import get_sorted_markers_for_paradigm
 
-    precomputed = get_sorted_markers_for_paradigm(paradigm_name)
+    precomputed = get_sorted_markers_for_paradigm(paradigm_name, paradigm_config=paradigm_config)
     for pm, fs in precomputed["all_markers_sorted"]:
         fs_frozen = (
             frozenset(fs.items())

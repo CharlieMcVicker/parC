@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pynini
 
+from parC.grammar.config_loader import GrammarConfig
 from parC.grammar.blueprints.alphabet import AlphabetBlueprint
 from parC.grammar.blueprints.patterns import PatternLibraryBlueprint
 from parC.grammar.transducer_compilation import (
@@ -34,8 +35,10 @@ class RulePipelineBlueprint:
         self.rules = rules
 
     @classmethod
-    def from_config(cls) -> RulePipelineBlueprint:
-        """Constructs RulePipelineBlueprint by reading global config once."""
+    def from_config(cls, config: GrammarConfig | None = None) -> RulePipelineBlueprint:
+        """Constructs RulePipelineBlueprint from a pre-loaded GrammarConfig or by reading global config."""
+        if config is not None:
+            return cls(rules=config.rules)
         return cls(rules=get_rules())
 
     def _compile_rule_obj(self, rule: Rule) -> pynini.Fst | list[pynini.Fst]:
