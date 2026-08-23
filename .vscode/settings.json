@@ -27,9 +27,7 @@
             "comments": false
         }
     },
-    "terminal.integrated.hideOnStartup": "always"
-<<<<<<< HEAD
+    "terminal.integrated.hideOnStartup": "always",
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda"
 }
-=======
-}
->>>>>>> 3f616c2 (hacky cache fix for colang)
