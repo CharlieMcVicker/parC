@@ -25,72 +25,69 @@ class PatternLibraryBlueprint:
     """Blueprint for Layer 2 Pattern Library & Class/Pattern Acceptors.
 
     Wraps pattern compilation functions and recursive descent pattern parsing,
-    explicitly accepting an AlphabetBlueprint instance for symbol table / FSA resolution.
+    storing pattern models explicitly and receiving AlphabetBlueprint via method injection.
     """
 
     def __init__(
         self,
-        alphabet: AlphabetBlueprint | None = None,
-        patterns: dict[str, Pattern] | None = None,
+        patterns: dict[str, Pattern],
+        pattern_acceptors: dict[str, pynini.Fst] | None = None,
     ) -> None:
-        self.alphabet = alphabet or AlphabetBlueprint()
-        self._custom_patterns = patterns
-        self._pattern_acceptors: dict[str, pynini.Fst] | None = None
+        self.patterns = patterns
+        self._pattern_acceptors = pattern_acceptors
 
-    @property
-    def patterns(self) -> dict[str, Pattern]:
-        if self._custom_patterns is not None:
-            return self._custom_patterns
-        return get_patterns()
+    @classmethod
+    def from_config(cls) -> PatternLibraryBlueprint:
+        """Constructs PatternLibraryBlueprint by reading global config once."""
+        return cls(patterns=get_patterns())
 
-    def get_all_pattern_acceptors(self) -> dict[str, pynini.Fst]:
+    def get_all_pattern_acceptors(
+        self, alphabet: AlphabetBlueprint
+    ) -> dict[str, pynini.Fst]:
         """Returns compiled pattern acceptors mapping pattern/class name to FST acceptor."""
         if self._pattern_acceptors is None:
-            if (
-                self._custom_patterns is not None
-                or self.alphabet._custom_inventory is not None
-                or self.alphabet._custom_features is not None
-            ):
-                syms = self.alphabet.get_symbol_table()
-                inventory = self.alphabet.inventory
-                features = self.alphabet.features
-                patterns = self.patterns
-                special_fsas = self.alphabet.get_special_fsas()
-                class_fsts = _build_class_fsts(syms, inventory)
-                phone_starts = {p[0] for p in inventory.phones}
-                token_map = _build_token_map(syms, inventory, features, patterns)
-                self._pattern_acceptors = compile_all_patterns(
-                    patterns,
-                    token_map,
-                    phone_starts,
-                    syms,
-                    special_fsas["sigma"],
-                    special_fsas,
-                    class_fsts,
-                )
-            else:
-                self._pattern_acceptors = get_pattern_fsts()
+            syms = alphabet.get_symbol_table()
+            inventory = alphabet.inventory
+            features = alphabet.features
+            patterns = self.patterns
+            special_fsas = alphabet.get_special_fsas()
+            class_fsts = _build_class_fsts(syms, inventory)
+            phone_starts = {p[0] for p in inventory.phones}
+            token_map = _build_token_map(syms, inventory, features, patterns)
+            self._pattern_acceptors = compile_all_patterns(
+                patterns,
+                token_map,
+                phone_starts,
+                syms,
+                special_fsas["sigma"],
+                special_fsas,
+                class_fsts,
+            )
         return self._pattern_acceptors
 
-    def get_pattern_acceptor(self, name: str) -> pynini.Fst:
+    def get_pattern_acceptor(
+        self, name: str, alphabet: AlphabetBlueprint
+    ) -> pynini.Fst:
         """Get compiled acceptor FST for a specific named pattern or inventory class."""
-        acceptors = self.get_all_pattern_acceptors()
+        acceptors = self.get_all_pattern_acceptors(alphabet)
         if name not in acceptors:
             raise KeyError(
                 f"Pattern or class name '{name}' not found in compiled pattern acceptors."
             )
         return acceptors[name]
 
-    def compile_pattern_string(self, pattern_str: str) -> pynini.Fst:
+    def compile_pattern_string(
+        self, pattern_str: str, alphabet: AlphabetBlueprint
+    ) -> pynini.Fst:
         """Compile a pattern DSL string on-the-fly using the symbol space and pattern library."""
-        syms = self.alphabet.get_symbol_table()
-        inventory = self.alphabet.inventory
-        features = self.alphabet.features
+        syms = alphabet.get_symbol_table()
+        inventory = alphabet.inventory
+        features = alphabet.features
         patterns = self.patterns
-        special_fsas = self.alphabet.get_special_fsas()
+        special_fsas = alphabet.get_special_fsas()
         phone_starts = {p[0] for p in inventory.phones}
         token_map = _build_token_map(syms, inventory, features, patterns)
-        compiled_patterns = self.get_all_pattern_acceptors()
+        compiled_patterns = self.get_all_pattern_acceptors(alphabet)
         sigma = special_fsas["sigma"]
         return _parse_pattern(
             pattern_str,
@@ -101,3 +98,4 @@ class PatternLibraryBlueprint:
             sigma,
             special_fsas,
         )
+

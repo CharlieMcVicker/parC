@@ -24,25 +24,19 @@ from parC.yaml_utils.yaml_server import get_rules
 class RulePipelineBlueprint:
     """Blueprint for Layer 3 Rule Pipeline & Rewrite Transducers.
 
-    Wraps rewrite rule compilation functions while taking explicit
-    AlphabetBlueprint and PatternLibraryBlueprint dependencies.
+    Stores rule models explicitly and receives lower-layer blueprints via method injection.
     """
 
     def __init__(
         self,
-        alphabet: AlphabetBlueprint | None = None,
-        patterns: PatternLibraryBlueprint | None = None,
-        rules: dict[str, Rule] | None = None,
+        rules: dict[str, Rule],
     ) -> None:
-        self.alphabet = alphabet or AlphabetBlueprint()
-        self.patterns = patterns or PatternLibraryBlueprint(alphabet=self.alphabet)
-        self._custom_rules = rules
+        self.rules = rules
 
-    @property
-    def rules(self) -> dict[str, Rule]:
-        if self._custom_rules is not None:
-            return self._custom_rules
-        return get_rules()
+    @classmethod
+    def from_config(cls) -> RulePipelineBlueprint:
+        """Constructs RulePipelineBlueprint by reading global config once."""
+        return cls(rules=get_rules())
 
     def _compile_rule_obj(self, rule: Rule) -> pynini.Fst | list[pynini.Fst]:
         """Internal helper to compile a Rule instance using self.rules for RuleSequence resolution."""
@@ -65,14 +59,11 @@ class RulePipelineBlueprint:
     def compile_rule_transducer(self, rule_name: str) -> pynini.Fst | list[pynini.Fst]:
         """Compiles or retrieves FST(s) for a given rule name."""
         rule_name_clean = rule_name.removeprefix("$")
-        if self._custom_rules is not None:
-            if rule_name_clean not in self.rules:
-                raise KeyError(
-                    f"Rule '{rule_name_clean}' not found in set of rules {list(self.rules.keys())}"
-                )
-            return self._compile_rule_obj(self.rules[rule_name_clean])
-        return get_rule_fst(rule_name_clean)
-
+        if rule_name_clean not in self.rules:
+            raise KeyError(
+                f"Rule '{rule_name_clean}' not found in set of rules {list(self.rules.keys())}"
+            )
+        return self._compile_rule_obj(self.rules[rule_name_clean])
 
     def get_rule_sequence_fst(self, sequence_name: str) -> list[pynini.Fst]:
         """Retrieves flat list of FSTs for a rule sequence."""
@@ -95,17 +86,16 @@ class RulePipelineBlueprint:
 class MarkerLibraryBlueprint:
     """Blueprint for Layer 3 Marker Library & Exponence Transducers.
 
-    Wraps marker compilation functions and stage grouping methods while taking explicit
-    AlphabetBlueprint and PatternLibraryBlueprint dependencies.
+    Wraps marker compilation functions and stage grouping methods.
     """
 
-    def __init__(
-        self,
-        alphabet: AlphabetBlueprint | None = None,
-        patterns: PatternLibraryBlueprint | None = None,
-    ) -> None:
-        self.alphabet = alphabet or AlphabetBlueprint()
-        self.patterns = patterns or PatternLibraryBlueprint(alphabet=self.alphabet)
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def from_config(cls) -> MarkerLibraryBlueprint:
+        """Constructs MarkerLibraryBlueprint."""
+        return cls()
 
     def compile_marker_transducer(
         self, marker: Marker, trigger_tags: tuple[str, ...] | list[str] | None = None
@@ -118,10 +108,7 @@ class MarkerLibraryBlueprint:
     def get_markers_by_stage(
         self, markers: list[Marker] | tuple[Marker, ...]
     ) -> dict[str, list[Marker]]:
-        """Groups a sequence/collection of markers by their 'stage' attribute.
-
-        Default stage is 'unspecified' if stage attribute is not present or None.
-        """
+        """Groups a sequence/collection of markers by their 'stage' attribute."""
         staged: dict[str, list[Marker]] = {}
         for m in markers:
             stage = getattr(m, "stage", None) or "unspecified"
@@ -145,3 +132,4 @@ class MarkerLibraryBlueprint:
                 for m in stage_markers
             ]
         return compiled_staged
+

@@ -20,12 +20,9 @@ from parC.yaml_utils.models import (
 
 
 def test_rule_pipeline_blueprint_default():
-    """Test RulePipelineBlueprint with default project environment config."""
-    rule_bp = RulePipelineBlueprint()
-    assert isinstance(rule_bp.alphabet, AlphabetBlueprint)
-    assert isinstance(rule_bp.patterns, PatternLibraryBlueprint)
+    """Test RulePipelineBlueprint with default project environment config via from_config factory."""
+    rule_bp = RulePipelineBlueprint.from_config()
 
-    # Pick a rule from default config if available
     rules = rule_bp.rules
     assert isinstance(rules, dict)
     assert len(rules) > 0
@@ -39,19 +36,13 @@ def test_rule_pipeline_blueprint_default():
 
 
 def test_rule_pipeline_blueprint_custom():
-    """Test RulePipelineBlueprint with explicit custom rules and dependencies."""
-    inv = Inventory(item_map={}, phones=("a", "b", "c"), tags=())
-    alph_bp = AlphabetBlueprint(inventory=inv, features=())
-    pat_bp = PatternLibraryBlueprint(alphabet=alph_bp)
-
+    """Test RulePipelineBlueprint with explicit custom rules."""
     custom_rules = {
         "rule_a_to_b": SimpleRule(input_pattern="a", output_pattern="b"),
         "rule_seq": RuleSequence(rule_sequence=("rule_a_to_b",)),
     }
 
-    rule_bp = RulePipelineBlueprint(
-        alphabet=alph_bp, patterns=pat_bp, rules=custom_rules
-    )
+    rule_bp = RulePipelineBlueprint(rules=custom_rules)
 
     # Test compile simple rule
     fst = rule_bp.compile_rule_transducer("rule_a_to_b")
@@ -73,25 +64,20 @@ def test_rule_pipeline_blueprint_custom():
 
 def test_marker_library_blueprint():
     """Test MarkerLibraryBlueprint compilation and stage grouping."""
-    marker_bp = MarkerLibraryBlueprint()
+    marker_bp = MarkerLibraryBlueprint.from_config()
 
     m1 = SingleStringMarker(kind="prefix", value="ba_", stage="prefix_stage")
     m2 = SingleStringMarker(kind="suffix", value="_ab", stage="suffix_stage")
     m3 = StringTupleMarker(kind="replace", value=("a", "b"), stage="suffix_stage")
     m4 = SingleStringMarker(kind="prefix", value="ba", stage=None)
 
-
     # Test compile_marker_transducer
     fst1 = marker_bp.compile_marker_transducer(m1)
     assert isinstance(fst1, pynini.Fst)
 
-    # Test gated compilation using a valid tag from default symbol table
-    syms = marker_bp.alphabet.get_symbol_table()
-    # Find any tag symbol in syms (tags in default inventory or boundary tags)
     valid_tag = "[BOW]"
     gated_fst = marker_bp.compile_marker_transducer(m1, trigger_tags=(valid_tag,))
     assert isinstance(gated_fst, pynini.Fst)
-
 
     # Test stage grouping
     markers = [m1, m2, m3, m4]

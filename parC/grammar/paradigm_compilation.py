@@ -924,105 +924,22 @@ def build_inflect_graph_for_root_regex(
     infer_lexical_features: bool = False,
     cache_key: str = None,
     non_deterministic_cleanup: bool = False,
+    cascade_blueprint: StageCascadeBlueprint | None = None,
 ) -> pynini.Fst:
     """root_regex[lexical_features][inflectional_features] → surface form."""
-    is_open_root = root_regex == "<Phone>*"
-    base_cache_key = None
-    if is_open_root:
-        base_cache_key = get_paradigm_cache_key(paradigm_name)
-        if cache_key is None:
-            cache_key = base_cache_key
-        # Append settings suffix to cache_key
-        settings = []
-        if infer_lexical_features:
-            settings.append("infer")
-        if non_deterministic_cleanup:
-            settings.append("nd_cleanup")
-        if lexical_features and not infer_lexical_features:
-            import hashlib
+    if cascade_blueprint is None:
+        from parC.grammar.blueprints.paradigms import StageCascadeBlueprint
 
-            if isinstance(lexical_features, (dict, frozendict)):
-                feats_tuple = tuple(sorted(lexical_features.items()))
-            else:
-                feats_tuple = tuple(sorted(lexical_features))
-            feats_str = ",".join(
-                f"{f}={v}"
-                for f, v in feats_tuple
-            )
-            settings.append(f"lex_{hashlib.sha256(feats_str.encode()).hexdigest()[:8]}")
-
-        if settings:
-            cache_key = f"{cache_key}_{'_'.join(settings)}"
-
-    if cache_key and is_open_root:
-        open_inflect = get_cached_fst(f"{cache_key}_open_inflect")
-        if open_inflect is not None:
-            return open_inflect
-
-    paradigm_data = get_yaml_data_safe("Paradigm", paradigm_name)
-    if paradigm_data is None:
-        raise ValueError(f"Paradigm '{paradigm_name}' not found or invalid.")
-
-    if is_open_root:
-        open_root_template = paradigm_data.get("open_root_template")
-        if open_root_template:
-            # Compile the custom template pattern
-            open_root_fsa = fsa(open_root_template)
-        else:
-            from parC.grammar.acceptor_compilation import get_special_fsas
-            special_fsas = get_special_fsas()
-            phone_fsa = special_fsas["phone"]
-            user_tag_fsa = special_fsas["user_tag"]
-            open_root_fsa = pynini.union(phone_fsa, user_tag_fsa).star.optimize()
-        
-        from parC.grammar.acceptor_compilation import get_special_fsas
-        special_fsas = get_special_fsas()
-        bow_fsa = special_fsas["bow"]
-        eow_fsa = special_fsas["eow"]
-        root_fsa = pynini.concat(bow_fsa, pynini.concat(open_root_fsa, eow_fsa)).optimize()
-    elif isinstance(root_regex, str):
-        root_fsa = fsa(R.bow + root_regex + R.eow)
-    else:
-        root_fsa = root_regex
-
-    feature_map = get_feature_map()
-    lexical_combos, referenced_lexical_features, lexical_feature_names = (
-        _resolve_lexical_combos(
-            paradigm_data=paradigm_data,
-            feature_map=feature_map,
-            lexical_features=lexical_features,
-            infer_lexical_features=infer_lexical_features,
-        )
-    )
-
-    roots_and_lexical_combos = [(root_fsa, combo) for combo in lexical_combos]
-
-    if infer_lexical_features:
-        lex_combos_set = frozenset(frozenset(c) for c in lexical_combos)
-    else:
-        if lexical_features:
-            if isinstance(lexical_features, (dict, frozendict)):
-                lex_set = frozenset(lexical_features.items())
-            else:
-                lex_set = frozenset(lexical_features)
-            lex_combos_set = frozenset([lex_set])
-        else:
-            lex_combos_set = frozenset([frozenset()])
-
-    return _compile_inflect_graph_shared(
-        paradigm_name=paradigm_name,
-        paradigm_data=paradigm_data,
-        feature_map=feature_map,
-        roots_and_lexical_combos=roots_and_lexical_combos,
+        cascade_blueprint = StageCascadeBlueprint.from_paradigm(paradigm_name)
+    return cascade_blueprint.build_open_inflect_graph(
+        root_regex=root_regex,
+        lexical_features=lexical_features,
         infer_lexical_features=infer_lexical_features,
-        lexical_feature_names=lexical_feature_names,
-        referenced_lexical_features=referenced_lexical_features,
-        lex_combos_set_for_active=lex_combos_set,
         cache_key=cache_key,
-        is_open_root=is_open_root,
-        base_cache_key=base_cache_key,
         non_deterministic_cleanup=non_deterministic_cleanup,
     )
+
+
 
 
 def get_open_inflect_graph(

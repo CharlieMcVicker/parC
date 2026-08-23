@@ -17,20 +17,22 @@ from parC.grammar.paradigm_compilation import (
 )
 
 
-def test_parsing_engine_blueprint_init():
-    """Test default initialization and explicit dependency injection."""
-    pe_bp = ParsingEngineBlueprint()
+def test_parsing_engine_blueprint_from_paradigm():
+    """Test ParsingEngineBlueprint.from_paradigm factory method and dependency properties."""
+    pe_bp = ParsingEngineBlueprint.from_paradigm("verb_a_stem")
     assert isinstance(pe_bp.cascade, StageCascadeBlueprint)
     assert isinstance(pe_bp.alphabet, AlphabetBlueprint)
     assert isinstance(pe_bp.patterns, PatternLibraryBlueprint)
     assert isinstance(pe_bp.rules, RulePipelineBlueprint)
     assert isinstance(pe_bp.markers, MarkerLibraryBlueprint)
 
-    alph = AlphabetBlueprint()
-    pat = PatternLibraryBlueprint(alphabet=alph)
-    rul = RulePipelineBlueprint(alphabet=alph, patterns=pat)
-    mar = MarkerLibraryBlueprint(alphabet=alph, patterns=pat)
-    casc = StageCascadeBlueprint(alphabet=alph, patterns=pat, rules=rul, markers=mar)
+    alph = AlphabetBlueprint.from_config()
+    pat = PatternLibraryBlueprint.from_config()
+    rul = RulePipelineBlueprint.from_config()
+    mar = MarkerLibraryBlueprint.from_config()
+    casc = StageCascadeBlueprint.from_paradigm(
+        "verb_a_stem", alphabet=alph, patterns=pat, rules=rul, markers=mar
+    )
 
     pe_bp_custom = ParsingEngineBlueprint(cascade=casc)
     assert pe_bp_custom.cascade is casc
@@ -42,8 +44,8 @@ def test_parsing_engine_blueprint_init():
 
 def test_build_open_parse_graph():
     """Test build_open_parse_graph produces inverted parse graph matching build_parse_graph(open_inflect)."""
-    pe_bp = ParsingEngineBlueprint()
-    parse_graph = pe_bp.build_open_parse_graph("verb_a_stem")
+    pe_bp = ParsingEngineBlueprint.from_paradigm("verb_a_stem")
+    parse_graph = pe_bp.build_open_parse_graph()
     assert isinstance(parse_graph, pynini.Fst)
 
     expected_inflect = get_open_inflect_graph("verb_a_stem")
@@ -52,9 +54,9 @@ def test_build_open_parse_graph():
 
 
 def test_build_search_lattice_from_paradigm():
-    """Test build_search_lattice with paradigm_name parameter."""
-    pe_bp = ParsingEngineBlueprint()
-    search_lexicon, search_left_factor = pe_bp.build_search_lattice(paradigm_name="verb_a_stem")
+    """Test build_search_lattice with paradigm_name factory."""
+    pe_bp = ParsingEngineBlueprint.from_paradigm("verb_a_stem")
+    search_lexicon, search_left_factor = pe_bp.build_search_lattice()
     assert isinstance(search_lexicon, pynini.Fst)
     assert isinstance(search_left_factor, pynini.Fst)
     assert search_lexicon.num_states() > 0
@@ -63,7 +65,7 @@ def test_build_search_lattice_from_paradigm():
 
 def test_build_search_lattice_from_inflect_graph():
     """Test build_search_lattice with explicit inflect_graph parameter."""
-    pe_bp = ParsingEngineBlueprint()
+    pe_bp = ParsingEngineBlueprint.from_paradigm("verb_a_stem")
     inflect_fst = get_open_inflect_graph("verb_a_stem")
     search_lexicon, search_left_factor = pe_bp.build_search_lattice(inflect_graph=inflect_fst)
     assert isinstance(search_lexicon, pynini.Fst)
@@ -71,9 +73,3 @@ def test_build_search_lattice_from_inflect_graph():
     assert search_lexicon.num_states() > 0
     assert search_left_factor.num_states() > 0
 
-
-def test_build_search_lattice_missing_args():
-    """Test build_search_lattice raises ValueError when neither argument is provided."""
-    pe_bp = ParsingEngineBlueprint()
-    with pytest.raises(ValueError, match="Either paradigm_name or inflect_graph must be provided."):
-        pe_bp.build_search_lattice()

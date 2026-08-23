@@ -15,21 +15,21 @@ from parC.yaml_utils.models import Inventory, Pattern
 
 def test_pattern_library_blueprint_default():
     """Test PatternLibraryBlueprint with default project environment config."""
-    pattern_bp = PatternLibraryBlueprint()
+    alphabet_bp = AlphabetBlueprint.from_config()
+    pattern_bp = PatternLibraryBlueprint.from_config()
 
-    assert isinstance(pattern_bp.alphabet, AlphabetBlueprint)
-    all_acceptors = pattern_bp.get_all_pattern_acceptors()
+    all_acceptors = pattern_bp.get_all_pattern_acceptors(alphabet_bp)
     assert isinstance(all_acceptors, dict)
     assert len(all_acceptors) > 0
 
     # Test get_pattern_acceptor for an existing key
     sample_key = next(iter(all_acceptors.keys()))
-    acc = pattern_bp.get_pattern_acceptor(sample_key)
+    acc = pattern_bp.get_pattern_acceptor(sample_key, alphabet_bp)
     assert isinstance(acc, pynini.Fst)
 
     # Test error handling for non-existent pattern key
     with pytest.raises(KeyError):
-        pattern_bp.get_pattern_acceptor("NON_EXISTENT_PATTERN_12345")
+        pattern_bp.get_pattern_acceptor("NON_EXISTENT_PATTERN_12345", alphabet_bp)
 
 
 def test_pattern_library_blueprint_explicit_alphabet_and_custom_patterns():
@@ -43,17 +43,16 @@ def test_pattern_library_blueprint_explicit_alphabet_and_custom_patterns():
         "<PatternRef>": Pattern(name="PatternRef", pattern="<Vowel>c"),
     }
 
-    pattern_bp = PatternLibraryBlueprint(alphabet=alphabet_bp, patterns=custom_pats)
-    assert pattern_bp.alphabet is alphabet_bp
+    pattern_bp = PatternLibraryBlueprint(patterns=custom_pats)
 
-    acceptors = pattern_bp.get_all_pattern_acceptors()
+    acceptors = pattern_bp.get_all_pattern_acceptors(alphabet_bp)
     assert "<Vowel>" in acceptors
     assert "<PatternAB>" in acceptors
     assert "<PatternRef>" in acceptors
 
-    vowel_fst = pattern_bp.get_pattern_acceptor("<Vowel>")
-    ab_fst = pattern_bp.get_pattern_acceptor("<PatternAB>")
-    ref_fst = pattern_bp.get_pattern_acceptor("<PatternRef>")
+    vowel_fst = pattern_bp.get_pattern_acceptor("<Vowel>", alphabet_bp)
+    ab_fst = pattern_bp.get_pattern_acceptor("<PatternAB>", alphabet_bp)
+    ref_fst = pattern_bp.get_pattern_acceptor("<PatternRef>", alphabet_bp)
 
     syms = alphabet_bp.get_symbol_table()
     a_fst = pynini.accep("a", token_type=syms)
@@ -70,10 +69,10 @@ def test_pattern_library_blueprint_explicit_alphabet_and_custom_patterns():
 
 def test_compile_pattern_string_on_the_fly():
     """Test PatternLibraryBlueprint.compile_pattern_string method."""
-    alphabet_bp = AlphabetBlueprint()
-    pattern_bp = PatternLibraryBlueprint(alphabet=alphabet_bp)
+    alphabet_bp = AlphabetBlueprint.from_config()
+    pattern_bp = PatternLibraryBlueprint.from_config()
 
-    compiled_fst = pattern_bp.compile_pattern_string("[BOW]a[EOW]")
+    compiled_fst = pattern_bp.compile_pattern_string("[BOW]a[EOW]", alphabet=alphabet_bp)
     assert isinstance(compiled_fst, pynini.Fst)
 
     syms = alphabet_bp.get_symbol_table()
@@ -84,6 +83,6 @@ def test_compile_pattern_string_on_the_fly():
 def test_pure_function_signatures_preserved():
     """Verify that pure compilation functions remain operational and signatures are preserved."""
     inv = Inventory(item_map={}, phones=("m", "n"), tags=())
-    syms = AlphabetBlueprint(inventory=inv).get_symbol_table()
+    syms = AlphabetBlueprint(inventory=inv, features=()).get_symbol_table()
     class_fsts = _build_class_fsts(syms, inv)
     assert isinstance(class_fsts, dict)

@@ -27,44 +27,35 @@ class AlphabetBlueprint:
 
     def __init__(
         self,
-        inventory: Inventory | None = None,
-        features: tuple[Feature, ...] | None = None,
+        inventory: Inventory,
+        features: tuple[Feature, ...],
         syms: pynini.SymbolTable | None = None,
+        special_fsas: dict[str, pynini.Fst] | None = None,
     ) -> None:
-        self._custom_inventory = inventory
-        self._custom_features = features
+        self.inventory = inventory
+        self.features = features
         self._syms = syms
-        self._special_fsas: dict[str, pynini.Fst] | None = None
+        self._special_fsas = special_fsas
 
-    @property
-    def inventory(self) -> Inventory:
-        if self._custom_inventory is not None:
-            return self._custom_inventory
-        return get_inventory_items()
-
-    @property
-    def features(self) -> tuple[Feature, ...]:
-        if self._custom_features is not None:
-            return self._custom_features
-        return get_feature_array()
+    @classmethod
+    def from_config(cls) -> AlphabetBlueprint:
+        """Constructs AlphabetBlueprint by reading global config once."""
+        return cls(
+            inventory=get_inventory_items(),
+            features=get_feature_array(),
+        )
 
     def get_symbol_table(self) -> pynini.SymbolTable:
         if self._syms is None:
-            if self._custom_inventory is not None or self._custom_features is not None:
-                self._syms = build_symbol_table(self.inventory, self.features)
-            else:
-                self._syms = get_symbol_table()
+            self._syms = build_symbol_table(self.inventory, self.features)
         return self._syms
 
     def get_special_fsas(self) -> dict[str, pynini.Fst]:
         if self._special_fsas is None:
             syms = self.get_symbol_table()
-            if self._custom_inventory is not None or self._custom_features is not None:
-                self._special_fsas = _build_special_fsas(
-                    syms, self.inventory, self.features
-                )
-            else:
-                self._special_fsas = get_special_fsas()
+            self._special_fsas = _build_special_fsas(
+                syms, self.inventory, self.features
+            )
         return self._special_fsas
 
     def get_phone_acceptor(self) -> pynini.Fst:
@@ -78,3 +69,4 @@ class AlphabetBlueprint:
 
     def get_flag_acceptor(self) -> pynini.Fst:
         return self.get_special_fsas()["flag"]
+

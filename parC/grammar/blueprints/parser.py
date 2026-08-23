@@ -24,27 +24,34 @@ from parC.grammar.paradigm_compilation import (
 class ParsingEngineBlueprint:
     """Blueprint for Layer 5 Parsing Engine and Fuzzy Search Lattice.
 
-    Wraps parse graph inversion and search graph/lattice construction while taking explicit
-    lower-layer blueprints as dependencies.
+    Holds explicit StageCascadeBlueprint as dependency and exposes methods for parse graph inversion
+    and search lattice construction.
     """
 
     def __init__(
         self,
-        cascade: StageCascadeBlueprint | None = None,
+        cascade: StageCascadeBlueprint,
+    ) -> None:
+        self.cascade = cascade
+
+    @classmethod
+    def from_paradigm(
+        cls,
+        paradigm_name: str,
         alphabet: AlphabetBlueprint | None = None,
         patterns: PatternLibraryBlueprint | None = None,
         rules: RulePipelineBlueprint | None = None,
         markers: MarkerLibraryBlueprint | None = None,
-    ) -> None:
-        if cascade is not None:
-            self.cascade = cascade
-        else:
-            self.cascade = StageCascadeBlueprint(
-                alphabet=alphabet,
-                patterns=patterns,
-                rules=rules,
-                markers=markers,
-            )
+    ) -> ParsingEngineBlueprint:
+        """Constructs ParsingEngineBlueprint for a named paradigm."""
+        cascade = StageCascadeBlueprint.from_paradigm(
+            paradigm_name=paradigm_name,
+            alphabet=alphabet,
+            patterns=patterns,
+            rules=rules,
+            markers=markers,
+        )
+        return cls(cascade=cascade)
 
     @property
     def alphabet(self) -> AlphabetBlueprint:
@@ -64,15 +71,13 @@ class ParsingEngineBlueprint:
 
     def build_open_parse_graph(
         self,
-        paradigm_name: str,
-        root_regex: str = "<Phone>*",
+        root_regex: str | pynini.Fst = "<Phone>*",
         lexical_features: dict[str, str] | None = None,
         infer_lexical_features: bool = False,
         non_deterministic_cleanup: bool = False,
     ) -> pynini.Fst:
         """Builds open parse graph FST by inverting open inflection graph FST."""
         open_inflect = self.cascade.build_open_inflect_graph(
-            paradigm_name=paradigm_name,
             root_regex=root_regex,
             lexical_features=lexical_features,
             infer_lexical_features=infer_lexical_features,
@@ -82,25 +87,19 @@ class ParsingEngineBlueprint:
 
     def build_search_lattice(
         self,
-        paradigm_name: str | None = None,
         inflect_graph: pynini.Fst | None = None,
-        root_regex: str = "<Phone>*",
+        root_regex: str | pynini.Fst = "<Phone>*",
         lexical_features: dict[str, str] | None = None,
         infer_lexical_features: bool = False,
         non_deterministic_cleanup: bool = False,
     ) -> tuple[pynini.Fst, pynini.Fst]:
-        """Builds search lexicon and search left factor FSTs for fuzzy search lattice.
-
-        Either paradigm_name or inflect_graph must be provided.
-        """
+        """Builds search lexicon and search left factor FSTs for fuzzy search lattice."""
         if inflect_graph is None:
-            if paradigm_name is None:
-                raise ValueError("Either paradigm_name or inflect_graph must be provided.")
             inflect_graph = self.cascade.build_open_inflect_graph(
-                paradigm_name=paradigm_name,
                 root_regex=root_regex,
                 lexical_features=lexical_features,
                 infer_lexical_features=infer_lexical_features,
                 non_deterministic_cleanup=non_deterministic_cleanup,
             )
         return build_search_lexicon_and_leftfactor(inflect_graph)
+

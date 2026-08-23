@@ -9,12 +9,12 @@ from parC.yaml_utils.models import Feature, FeatureValueDef, Inventory
 
 
 def test_alphabet_blueprint_default():
-    """Test AlphabetBlueprint with default project environment config."""
-    bp = AlphabetBlueprint()
+    """Test AlphabetBlueprint with default project environment config via from_config factory."""
+    bp = AlphabetBlueprint.from_config()
 
     syms = bp.get_symbol_table()
     assert isinstance(syms, pynini.SymbolTable)
-    assert syms == get_symbol_table()
+    assert syms.write_to_string() == get_symbol_table().write_to_string()
 
     phone = bp.get_phone_acceptor()
     assert isinstance(phone, pynini.Fst)
