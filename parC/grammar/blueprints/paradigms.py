@@ -33,24 +33,16 @@ class StageCascadeBlueprint:
 
     def __init__(
         self,
-        paradigm_config: ParadigmConfig | str,
+        paradigm_config: ParadigmConfig,
         alphabet: AlphabetBlueprint,
         patterns: PatternLibraryBlueprint,
         rules: RulePipelineBlueprint,
         markers: MarkerLibraryBlueprint,
-        paradigm_data: dict | None = None,
-        feature_map: dict[str, tuple[str, ...]] | None = None,
     ) -> None:
-        if isinstance(paradigm_config, ParadigmConfig):
-            self.paradigm_config = paradigm_config
-            self.paradigm_name = paradigm_config.paradigm_name
-            self.paradigm_data = paradigm_config.paradigm_data
-            self.feature_map = paradigm_config.feature_map
-        else:
-            self.paradigm_config = None
-            self.paradigm_name = paradigm_config
-            self.paradigm_data = paradigm_data
-            self.feature_map = feature_map
+        self.paradigm_config = paradigm_config
+        self.paradigm_name = paradigm_config.paradigm_name
+        self.paradigm_data = paradigm_config.paradigm_data
+        self.feature_map = paradigm_config.feature_map
         self.alphabet = alphabet
         self.patterns = patterns
         self.rules = rules
