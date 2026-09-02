@@ -473,10 +473,11 @@ def _compile_stage_cascade(
 
                 marker_constraints = []
                 for fs in combo_tag_lists:
-                    constraint_fsa = get_constraint_fsa(fs)
-                    marker_constraints.append(constraint_fsa)
-                    if not has_global:
-                        stage_constraints.append(constraint_fsa)
+                    if fs:
+                        constraint_fsa = get_constraint_fsa(fs)
+                        marker_constraints.append(constraint_fsa)
+                        if not has_global:
+                            stage_constraints.append(constraint_fsa)
 
                 if marker_constraints:
                     marker_constraint_union = pynini.union(

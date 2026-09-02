@@ -410,7 +410,7 @@ def get_fixed_features_for_paradigm(
     if paradigm_data is None:
         paradigm_data = get_yaml_data_safe(kind=kind, yaml_basename=name)
     fixed_features = set()
-    for feature, value in paradigm_data["feature_markers"].items():
+    for feature, value in paradigm_data.get("feature_markers", {}).items():
         if isinstance(value, str) and not value.startswith("$"):
             fixed_features.add((feature, value))
 

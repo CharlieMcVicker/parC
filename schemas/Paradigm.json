@@ -5,8 +5,19 @@
   "type": "object",
   "required": [
     "kind",
-    "part_of_speech",
-    "feature_markers"
+    "part_of_speech"
+  ],
+  "anyOf": [
+    {
+      "required": [
+        "feature_markers"
+      ]
+    },
+    {
+      "required": [
+        "global_markers"
+      ]
+    }
   ],
   "properties": {
     "source_path": {
@@ -39,53 +50,51 @@
         }
       }
     },
-    "open_root_template": {
-      "type": "string",
-      "description": "A paradigm-specific open root template pattern to override the default templates."
+    "stage_order": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "The ordered stages of morphological application."
     },
-    "additionalProperties": false
-  },
-  "stage_order": {
-    "type": "array",
-    "items": {
-      "type": "string"
+    "global_markers": {
+      "type": "array",
+      "items": {
+        "$ref": "./FeatureMarkers.json#/definitions/marker"
+      },
+      "description": "Markers or rules applied to every form in the paradigm."
     },
-    "description": "The ordered stages of morphological application."
-  },
-  "global_markers": {
-    "type": "array",
-    "items": {
-      "$ref": "./FeatureMarkers.json#/definitions/marker"
+    "feature_markers": {
+      "type": "object",
+      "description": "Mapping of features to single feature values or marker files to import, or null if only ContingentFeatureMarkers are used.",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "Feature value or file reference (starts with $)."
+          },
+          {
+            "type": "null",
+            "description": "Indicates that no FeatureMarkers class is loaded, and that marking is instead handled by ContingentFeatureMarkers"
+          }
+        ]
+      }
     },
-    "description": "Markers or rules applied to every form in the paradigm."
-  },
-  "feature_markers": {
-    "type": "object",
-    "description": "Mapping of features to single feature values or marker files to import, or null if only ContingentFeatureMarkers are used.",
-    "additionalProperties": {
-      "oneOf": [
-        {
-          "type": "string",
-          "description": "Feature value or file reference (starts with $)."
-        },
-        {
-          "type": "null",
-          "description": "Indicates that no FeatureMarkers class is loaded, and that marking is instead handled by ContingentFeatureMarkers"
-        }
-      ]
-    }
-  },
-  "feature_value_combinations": {
-    "type": "string",
-    "pattern": "^\\$.*",
-    "description": "Imported defining valid feature cross-products. If blank, all combinations of features are generated."
-  },
-  "contingent_markers": {
-    "type": "array",
-    "items": {
+    "feature_value_combinations": {
       "type": "string",
       "pattern": "^\\$.*",
-      "description": "Filepath to import ContingentFeatureMarkers from."
+      "description": "Imported defining valid feature cross-products. If blank, all combinations of features are generated."
+    },
+    "contingent_markers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "Filepath to import ContingentFeatureMarkers from."
+      }
+    },
+    "open_root_template": {
+      "type": "string",
+      "description": "Morphotactic template for open root inflection and parsing."
     }
   }
 }
