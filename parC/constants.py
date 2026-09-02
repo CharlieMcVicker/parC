@@ -25,7 +25,8 @@ def _get_yaml_dir():
 
 
 def set_yaml_dir(path: str):
-    # TODO: add UI for changing YAML_DIR
+    global _YAML_DIR
+    _YAML_DIR = path
     os.environ["YAML_DIR"] = path
 
 
