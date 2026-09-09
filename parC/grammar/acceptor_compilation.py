@@ -541,7 +541,7 @@ def compile_all_patterns(
     """
     dep_graph: dict[str, set[str]] = {ref: set() for ref in patterns}
     for ref, pat in patterns.items():
-        for token in re.findall(r"<([^>]+)>", pat.pattern):
+        for token in re.findall(r"<[^>]+>", pat.pattern):
             if token in patterns:
                 dep_graph[ref].add(token)
     order = list(TopologicalSorter(dep_graph).static_order())

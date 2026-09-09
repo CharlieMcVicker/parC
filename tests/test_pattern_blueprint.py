@@ -80,9 +80,50 @@ def test_compile_pattern_string_on_the_fly():
     assert pynini.compose(a_fst, compiled_fst).num_states() > 0
 
 
+def test_pattern_dependency_topological_ordering():
+    """Test that phoneme group patterns defined out of order are topologically sorted and compiled in sequence."""
+    custom_inv = Inventory(item_map={}, phones=("a", "b", "c", "d"), tags=())
+    alphabet_bp = AlphabetBlueprint(inventory=custom_inv, features=())
+
+    # Out of order dependency chain: Pat3 depends on Pat2, Pat2 depends on Pat1, Pat1 is base
+    patterns = {
+        "<Pat3>": Pattern(name="Pat3", pattern="<Pat2>d"),
+        "<Pat2>": Pattern(name="Pat2", pattern="<Pat1>c"),
+        "<Pat1>": Pattern(name="Pat1", pattern="ab"),
+    }
+
+    pattern_bp = PatternLibraryBlueprint(patterns=patterns)
+    acceptors = pattern_bp.get_all_pattern_acceptors(alphabet_bp)
+
+    assert "<Pat1>" in acceptors
+    assert "<Pat2>" in acceptors
+    assert "<Pat3>" in acceptors
+
+    syms = alphabet_bp.get_symbol_table()
+    pat3_fst = pattern_bp.get_pattern_acceptor("<Pat3>", alphabet_bp)
+
+    # Word 'abcd' should match <Pat3>
+    abcd_fst = (
+        pynini.accep("a", token_type=syms)
+        + pynini.accep("b", token_type=syms)
+        + pynini.accep("c", token_type=syms)
+        + pynini.accep("d", token_type=syms)
+    )
+    assert pynini.compose(abcd_fst, pat3_fst).num_states() > 0
+
+    # Word 'abc' or 'abd' should not match <Pat3>
+    abc_fst = (
+        pynini.accep("a", token_type=syms)
+        + pynini.accep("b", token_type=syms)
+        + pynini.accep("c", token_type=syms)
+    )
+    assert pynini.compose(abc_fst, pat3_fst).num_states() == 0
+
+
 def test_pure_function_signatures_preserved():
     """Verify that pure compilation functions remain operational and signatures are preserved."""
     inv = Inventory(item_map={}, phones=("m", "n"), tags=())
     syms = AlphabetBlueprint(inventory=inv, features=()).get_symbol_table()
     class_fsts = _build_class_fsts(syms, inv)
     assert isinstance(class_fsts, dict)
+
